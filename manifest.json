@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "ADO Helper",
+  "short_name": "ADO Helper",
+  "homepage_url": "https://github.com/malzahuar/ado-helper-extension",
+  "version": "1.0.0",
+  "description": "Auto-fill branch names from work items using custom rules. View build & PR status icons on Azure DevOps boards.",
+  "author": "PantifasD3v",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://dev.azure.com/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "options_page": "src/options.html",
+  "icons": {
+    "16": "icons/icon.png",
+    "48": "icons/icon.png",
+    "128": "icons/icon.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://dev.azure.com/*"],
+      "js": ["src/azureDevOpsApi.js", "src/content.js"]
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["src/defaultData.json"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

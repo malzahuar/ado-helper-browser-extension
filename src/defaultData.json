@@ -1,0 +1,28 @@
+{
+  "issueTag" : "bugfix",
+  "userStoryTag" : "feature",
+  "formatSeparator" : "-",
+  "branchHotfixVersion" : "{major}{minor}",
+  "adoOrganization": "",
+  "adoProject": "",
+  "adoPatToken": "",
+  "enableBuildStatus": false,
+  "tableData": [
+    {
+      "col1": "develop",
+      "col2": "{workTypeTag}/{workItemId}-{title}"
+    },
+    {
+      "col1": "hotfix/{hotfixVersion}",
+      "col2": "hotfix/{workItemId}-v{hotfixVersion}-{title}"
+    },
+    {
+      "col1": "hotfix/latest",
+      "col2": "hotfix/{workItemId}-latest-{title}"
+    },
+    {
+      "col1": "release/release",
+      "col2": "{workItemId}-releasefix-{title}"
+    }
+  ]
+}

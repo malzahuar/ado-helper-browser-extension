@@ -1,0 +1,16 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "pwa-msedge",
+      "request": "launch",
+      "name": "Launch Edge with Extension",
+      "url": "https://dev.azure.com/dev-lsretail/LSCentral/",
+      "webRoot": "${workspaceFolder}",
+      "runtimeArgs": [
+        "--disable-extensions-except=${workspaceFolder}",
+        "--load-extension=${workspaceFolder}"
+      ]
+    }
+  ]
+}
