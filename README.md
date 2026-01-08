@@ -76,5 +76,13 @@ To make changes to the extension:
 ## 🔒 Security Note
 Your Personal Access Token (PAT) is stored locally in your browser using the `chrome.storage.sync` API. It is never sent to any third-party server; it is only used to communicate directly with the Azure DevOps REST API.
 
+## 📜 Version History
+
+### v1.1.0
+- **Fix**: Resolved an issue where the PR status was incorrectly calculated when the merge status was "succeeded".
+
+### v1.0.0
+- Initial release with Branch Name Generator and Build/PR Status indicators.
+
 ## 📄 License
 [MIT](LICENSE)
