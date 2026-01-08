@@ -195,9 +195,26 @@ class AzureDevOpsAPI {
                 hasAnyCompleted = true;                    
             }
             if (pr.status === 'active') {
-                if (pr.mergeStatus === 'conflicts') hasAnyFailed = true;
-                if (pr.mergeStatus === 'inProgress') hasAnyInProgress = true;
-                if (pr.mergeStatus === 'succeeded') hasAnySucceeded = true;                    
+                if (pr.mergeStatus === 'conflicts') {
+                    hasAnyFailed = true;
+                } else if (pr.mergeStatus === 'inProgress') {
+                    hasAnyInProgress = true;
+                } else if (pr.mergeStatus === 'succeeded') {
+                    // Check build status for PR
+                    const latestBuild = await this.getPullRequestLatestBuild(pr.pullRequestId);
+                    if (latestBuild) {
+                        const buildStatus = this.normalizeBuildStatus(latestBuild.status, latestBuild.result);
+                        if (buildStatus === 'failed' || buildStatus === 'partiallySucceeded') {
+                            hasAnyFailed = true;
+                        } else if (buildStatus === 'inProgress') {
+                            hasAnyInProgress = true;
+                        } else {
+                            hasAnySucceeded = true;
+                        }
+                    } else {
+                        hasAnySucceeded = true;
+                    }
+                }                         
             }
 
             prStatuses.push({
