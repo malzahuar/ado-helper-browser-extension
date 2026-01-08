@@ -22,6 +22,7 @@ Get immediate insight into the health of your work items directly from the Kanba
   - ❌ **Failed**: Build or PR failed.
   - 🔄 **In Progress**: Currently running.
   - 🚫 **Canceled**: Operation was canceled.
+  - 🤷‍♀️ **Not Found**: Build or PR not found.
 
 ![Example: Board with status icons updated](images/ScreenshotExtension.png)
 
@@ -37,7 +38,7 @@ Configure the extension to match your team's workflow via the Options page.
 2. Open Microsoft Edge and navigate to `edge://extensions`.
 3. Enable **"Developer mode"** using the toggle in the bottom-left or top-right corner.
 4. Click **"Load unpacked"**.
-5. Select the `edge-branch-helper` folder containing the `manifest.json` file.
+5. Select the `ado-helper-browser-extension` folder containing the `manifest.json` file.
 
 ## ⚙️ Configuration
 
