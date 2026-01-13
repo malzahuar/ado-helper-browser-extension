@@ -502,7 +502,7 @@ class AzureDevOpsAPI {
         try {
             // Try to find builds for this PR (usually on refs/pull/{id}/merge)
             const branchName = `refs/pull/${pullRequestId}/merge`;
-            const url = `${this.baseUrl}/build/builds?branchName=${encodeURIComponent(branchName)}&reasonFilter=pullRequest&api-version=7.0&$top=1`;
+            const url = `${this.baseUrl}/build/builds?branchName=${encodeURIComponent(branchName)}&reasonFilter=pullRequest&queryOrder=queueTimeDescending&$top=1&api-version=7.0`;
             
             const response = await fetch(url, {
                 headers: {
