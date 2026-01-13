@@ -78,6 +78,9 @@ Your Personal Access Token (PAT) is stored locally in your browser using the `ch
 
 ## 📜 Version History
 
+### v1.2.0
+- **Fix**: Resolved an issue where the PR status was incorrectly calculated when PR failed first time and new commit is pushed.
+- 
 ### v1.1.0
 - **Fix**: Resolved an issue where the PR status was incorrectly calculated when the merge status was "succeeded".
 
