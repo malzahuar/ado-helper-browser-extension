@@ -506,6 +506,92 @@
     <div class="container">
         <form id="options-form">
             <div class="card">
+                <h2 class="card-title">Azure DevOps API Configuration</h2>
+                <label for="ado-organization">
+                    Organization Name:
+                    <span class="help-icon" title="Your Azure DevOps organization (e.g., from https://dev.azure.com/YOUR_ORG)">ⓘ</span>
+                </label>
+                <input type="text" id="ado-organization" name="ado-organization" placeholder="e.g., mycompany">
+                
+                <label for="ado-project">
+                    Project Name:
+                    <span class="help-icon" title="Your Azure DevOps project name">ⓘ</span>
+                </label>
+                <input type="text" id="ado-project" name="ado-project" placeholder="e.g., MyProject">
+                
+                <label>
+                    Authentication Method:
+                    <span class="help-icon" title="Choose between OAuth (recommended) or Personal Access Token">ⓘ</span>
+                </label>
+                <div style="margin-top: 8px; display: flex; gap: 16px; align-items: center;">
+                    <label style="margin: 0; font-weight: normal; display: flex; align-items: center; gap: 8px;">
+                        <input type="radio" name="auth-method" id="auth-oauth" value="oauth" checked>
+                        OAuth (Recommended)
+                    </label>
+                    <label style="margin: 0; font-weight: normal; display: flex; align-items: center; gap: 8px;">
+                        <input type="radio" name="auth-method" id="auth-pat" value="pat">
+                        Personal Access Token
+                    </label>
+                </div>
+                
+                <!-- OAuth Section -->
+                <div id="oauth-section" style="margin-top: 12px; padding: 12px; border-radius: 4px; border: 1px solid var(--border-color);">
+                    <label style="display: block; margin: 0 0 8px 0;">
+                        Redirect URI:
+                        <span class="help-icon" title="Your extension's unique redirect URI for OAuth callback. Share this with your admin when creating the App Registration.">ⓘ</span>
+                    </label>
+                    <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 12px;">
+                        <input type="text" id="redirect-uri" readonly placeholder="Loading extension ID..." style="width: 100%; max-width: 100%; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--background); color: var(--text-primary); font-size: 13px;">
+                        <button type="button" id="copy-redirect-uri-btn" style="padding: 10px 16px; background: var(--primary-color); color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 500; white-space: nowrap;" title="Copy redirect URI to clipboard">
+                            📋 Copy
+                        </button>
+                    </div>
+                    <small style="display: block; margin-bottom: 12px; color: var(--text-secondary); font-size: 12px;">
+                        Automatically generated from your extension ID. Share this URL with your admin for the App Registration. Your admin needs to configure API permissions for <strong>Azure DevOps</strong> with Read access to: <strong>Work Items, Code, and Build</strong>.
+                    </small>
+                    
+                    <label for="ado-client-id" style="display: block; margin: 0 0 8px 0;">
+                        OAuth Client ID:
+                        <span class="help-icon" title="Application ID from Microsoft Entra ID. Pre-filled with default - override if your admin provided a custom one.">ⓘ</span>
+                    </label>
+                    <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 12px;">
+                        <input type="text" id="ado-client-id" name="ado-client-id" placeholder="e.g., xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" style="width: 100%; max-width: 100%; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--card-background); color: var(--text-primary); font-size: 13px;">
+                        <button type="button" id="load-default-client-id-btn" style="padding: 10px 16px; background: var(--primary-color); color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 500; white-space: nowrap;" title="Load default OAuth Client ID">
+                            ↻ Default
+                        </button>
+                    </div>
+                    <small style="display: block; margin-bottom: 12px; color: var(--text-secondary); font-size: 12px;">
+                        This field comes pre-filled with a default Client ID that works immediately for most users. You have two options:
+                        
+                        <br><br><strong style="color: var(--text-primary);">Default Client ID:</strong> Just click "Sign In with Microsoft" below. This works for company employees and individual users. If you're a company employee signing in for the first time, your IT department will see an approval prompt and approve once — then all employees get instant access.
+                        
+                        <br><br><strong style="color: var(--text-primary);">Custom Client ID (if your company provided one):</strong> Your admin may have created their own OAuth app(with the previous redirect URI). They'll share the Client ID with you. To use it: clear this field, paste their Client ID, then click "Sign In with Microsoft".
+                    </small>
+                    
+                    <div id="auth-status" style="margin-bottom: 12px; padding: 12px; border-radius: 4px; background: var(--background); display: none;">
+                        <span id="auth-status-text" style="font-size: 13px; color: var(--text-secondary);"></span>
+                    </div>
+                    <div id="auth-buttons" style="display: flex; gap: 10px;">
+                        <button type="button" id="oauth-login-btn" class="oauth-btn" style="background: var(--success-color); color: white; border: none; flex: 1; padding: 10px; border-radius: 4px; cursor: pointer; font-weight: 500;">
+                            Sign In with Microsoft
+                        </button>
+                        <button type="button" id="oauth-logout-btn" class="oauth-btn" style="background: var(--danger-color); color: white; border: none; flex: 1; padding: 10px; border-radius: 4px; cursor: pointer; font-weight: 500; display: none;">
+                            Sign Out
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- PAT Section -->
+                <div id="pat-section" style="margin-top: 12px; padding: 12px; border-radius: 4px; border: 1px solid var(--border-color); display: none;">
+                    <label for="ado-pat-token" style="display: block; margin: 0 0 8px 0;">
+                        Personal Access Token:
+                        <span class="help-icon" title="Generate a PAT with Read permissions for 'Work Item', 'Code' and 'Build' from Azure DevOps User Settings > Personal Access Tokens">ⓘ</span>
+                    </label>
+                    <input type="password" id="ado-pat-token" name="ado-pat-token" placeholder="Enter your PAT token" style="width: 100%; max-width: 100%;">
+                </div>
+            </div>
+            
+            <div class="card">
                 <h2 class="card-title">Work Type Tags</h2>
                 <div class="group" id="group">            
                     <div>
@@ -541,33 +627,6 @@
             </div>
             
             <div class="card">
-                <h2 class="card-title">Azure DevOps API Configuration</h2>
-                <label for="ado-organization">
-                    Organization Name:
-                    <span class="help-icon" title="Your Azure DevOps organization (e.g., from https://dev.azure.com/YOUR_ORG)">ⓘ</span>
-                </label>
-                <input type="text" id="ado-organization" name="ado-organization" placeholder="e.g., mycompany">
-                
-                <label for="ado-project">
-                    Project Name:
-                    <span class="help-icon" title="Your Azure DevOps project name">ⓘ</span>
-                </label>
-                <input type="text" id="ado-project" name="ado-project" placeholder="e.g., MyProject">
-                
-                <label for="ado-pat-token">
-                    Personal Access Token (PAT):
-                    <span class="help-icon" title="Generate a PAT with Read permissions for 'Work Item', 'Code' and 'Build' from Azure DevOps User Settings > Personal Access Tokens">ⓘ</span>
-                </label>
-                <input type="password" id="ado-pat-token" name="ado-pat-token" placeholder="Enter your PAT token">
-                
-                <label>
-                    <input type="checkbox" id="enable-build-status">
-                    Enable Build Status Icons on Boards
-                    <span class="help-icon" title="Shows build status icons on work items in board view">ⓘ</span>
-                </label>
-            </div>
-            
-            <div class="card">
                 <h2 class="card-title">Branch Naming Rules</h2>
                 <div class="table-container">
                     <table id="dynamic-table">
@@ -596,6 +655,7 @@
         </form>
     </div>
 
+    <script src="oauth.js"></script>
     <script src="options.js"></script>
 </body>
 </html>

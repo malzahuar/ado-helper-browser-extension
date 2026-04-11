@@ -6,7 +6,8 @@
   "adoOrganization": "",
   "adoProject": "",
   "adoPatToken": "",
-  "enableBuildStatus": false,
+  "adoClientId": "fe2e9f6e-cecd-4051-9c7c-2d1d3558ded1",
+  "authMethod": "oauth",
   "tableData": [
     {
       "col1": "develop",

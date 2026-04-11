@@ -4,11 +4,88 @@
  */
 
 class AzureDevOpsAPI {
-    constructor(organization, project, patToken) {
+    constructor(organization, project, authToken, isOAuth = false) {
         this.organization = organization;
         this.project = project;
-        this.patToken = patToken;
+        this.authToken = authToken;
+        this.isOAuth = isOAuth;
         this.baseUrl = `https://dev.azure.com/${organization}/${project}/_apis`;
+    }
+
+    /**
+     * Create API instance with PAT token (legacy)
+     * @param {string} organization - Azure DevOps organization
+     * @param {string} project - Azure DevOps project
+     * @param {string} patToken - PAT token
+     * @returns {AzureDevOpsAPI} API instance
+     */
+    static withPAT(organization, project, patToken) {
+        return new AzureDevOpsAPI(organization, project, patToken, false);
+    }
+
+    /**
+     * Create API instance with OAuth token
+     * @param {string} organization - Azure DevOps organization
+     * @param {string} project - Azure DevOps project
+     * @param {object} oauth - OAuth helper object
+     * @returns {Promise<AzureDevOpsAPI>} API instance
+     */
+    static async createWithOAuth(organization, project, oauth) {
+        const token = await oauth.getValidToken();
+        const instance = new AzureDevOpsAPI(organization, project, token, true);
+        instance.oauth = oauth;
+        return instance;
+    }
+
+    /**
+     * Create API instance using stored authentication method (OAuth or PAT)
+     * @param {string} organization - Azure DevOps organization
+     * @param {string} project - Azure DevOps project
+     * @param {string} clientId - OAuth Client ID (can be undefined if using PAT)
+     * @param {string} patToken - PAT token (can be undefined if using OAuth)
+     * @returns {Promise<AzureDevOpsAPI>} API instance
+     */
+    static createWithStoredAuth(organization, project, clientId = null, patToken = null) {
+        return new Promise((resolve, reject) => {
+            chrome.storage.sync.get('authMethod', (syncResult) => {
+                const authMethod = syncResult.authMethod || 'oauth';
+                
+                if (authMethod === 'pat' && patToken) {
+                    // Use PAT authentication
+                    console.log('Using PAT authentication');
+                    resolve(new AzureDevOpsAPI(organization, project, patToken, false));
+                } else if (authMethod === 'oauth' && clientId) {
+                    // Use OAuth authentication
+                    console.log(('Using OAuth authentication'));
+                    const OAuth = window.OAuth;  // OAuth class should be available globally
+                    const oauth = new OAuth(clientId);
+                    AzureDevOpsAPI.createWithOAuth(organization, project, oauth)
+                        .then(instance => resolve(instance))
+                        .catch(err => reject(err));
+                } else {
+                    reject(new Error('No valid authentication method configured'));
+                }
+            });
+        });
+    }
+
+    /**
+     * Get authentication header based on auth type
+     * @returns {Promise<string>} Authorization header value
+     */
+    async getAuthHeader() {
+        if (this.isOAuth) {
+            // For OAuth, use Bearer token
+            if (this.oauth) {
+                const token = await this.oauth.getValidToken();
+                return `Bearer ${token}`;
+            }
+            return `Bearer ${this.authToken}`;
+        } else {
+            // For PAT, use Basic auth
+            const token = btoa(`:${this.authToken}`);
+            return `Basic ${token}`;
+        }
     }
 
     /**
@@ -28,9 +105,10 @@ class AzureDevOpsAPI {
             const results = [];
             for (const chunk of chunks) {
                 const url = `${this.baseUrl}/wit/workitems?ids=${chunk.join(',')}&$expand=relations&api-version=7.0`;
+                const authHeader = await this.getAuthHeader();
                 const response = await fetch(url, {
                     headers: {
-                        'Authorization': this.getAuthHeader(),
+                        'Authorization': authHeader,
                         'Content-Type': 'application/json'
                     }
                 });
@@ -240,14 +318,6 @@ class AzureDevOpsAPI {
     }
 
     /**
-     * Create Basic Auth header from PAT token
-     */
-    getAuthHeader() {
-        const token = btoa(`:${this.patToken}`);
-        return `Basic ${token}`;
-    }
-
-    /**
      * Get all branches linked to a work item
      * @param {number} workItemId - The work item ID
      * @returns {Promise<Array>} Array of branch references
@@ -256,9 +326,10 @@ class AzureDevOpsAPI {
         try {
             const url = `${this.baseUrl}/wit/workitems/${workItemId}?$expand=relations&api-version=7.0`;
             
+            const authHeader = await this.getAuthHeader();
             const response = await fetch(url, {
                 headers: {
-                    'Authorization': this.getAuthHeader(),
+                    'Authorization': authHeader,
                     'Content-Type': 'application/json'
                 }
             });
@@ -388,9 +459,10 @@ class AzureDevOpsAPI {
 
             const url = `${this.baseUrl}/build/builds?branchName=${encodeURIComponent(fullBranchName)}&api-version=7.0`;
             
+            const authHeader = await this.getAuthHeader();
             const response = await fetch(url, {
                 headers: {
-                    'Authorization': this.getAuthHeader(),
+                    'Authorization': authHeader,
                     'Content-Type': 'application/json'
                 }
             });
@@ -437,9 +509,10 @@ class AzureDevOpsAPI {
     async getPullRequestDetails(pullRequestId) {
         try {
             const url = `${this.baseUrl}/git/pullrequests/${pullRequestId}?api-version=7.0`;
+            const authHeader = await this.getAuthHeader();
             const response = await fetch(url, {
                 headers: {
-                    'Authorization': this.getAuthHeader(),
+                    'Authorization': authHeader,
                     'Content-Type': 'application/json'
                 }
             });
@@ -460,9 +533,10 @@ class AzureDevOpsAPI {
         try {
             const url = `${this.baseUrl}/wit/workitems/${workItemId}?$expand=relations&api-version=7.0`;
             
+            const authHeader = await this.getAuthHeader();
             const response = await fetch(url, {
                 headers: {
-                    'Authorization': this.getAuthHeader(),
+                    'Authorization': authHeader,
                     'Content-Type': 'application/json'
                 }
             });
@@ -504,9 +578,10 @@ class AzureDevOpsAPI {
             const branchName = `refs/pull/${pullRequestId}/merge`;
             const url = `${this.baseUrl}/build/builds?branchName=${encodeURIComponent(branchName)}&reasonFilter=pullRequest&queryOrder=queueTimeDescending&$top=1&api-version=7.0`;
             
+            const authHeader = await this.getAuthHeader();
             const response = await fetch(url, {
                 headers: {
-                    'Authorization': this.getAuthHeader(),
+                    'Authorization': authHeader,
                     'Content-Type': 'application/json'
                 }
             });
@@ -859,9 +934,10 @@ class AzureDevOpsAPI {
             }
             
             const url = `${this.baseUrl}/git/repositories/${repoId}/refs?filter=heads/${encodeURIComponent(filterName)}&api-version=7.0`;
+            const authHeader = await this.getAuthHeader();
             const response = await fetch(url, {
                 headers: {
-                    'Authorization': this.getAuthHeader(),
+                    'Authorization': authHeader,
                     'Content-Type': 'application/json'
                 }
             });
@@ -887,9 +963,10 @@ class AzureDevOpsAPI {
     async getCommitStatuses(repoId, commitId) {
         try {
             const url = `${this.baseUrl}/git/repositories/${repoId}/commits/${commitId}/statuses?api-version=7.0`;
+            const authHeader = await this.getAuthHeader();
             const response = await fetch(url, {
                 headers: {
-                    'Authorization': this.getAuthHeader(),
+                    'Authorization': authHeader,
                     'Content-Type': 'application/json'
                 }
             });

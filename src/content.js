@@ -1,6 +1,7 @@
 // Global variable to store settings
 let extensionSettings = {};
 let lastUrl = window.location.href;
+let cachedApi = null; // Cache the API instance
 
 // Function to show toast notification
 function showNotification(message, type = 'info') {
@@ -46,13 +47,49 @@ function showNotification(message, type = 'info') {
     }, 3000);
 }
 
+/**
+ * Get or create cached API instance
+ * Reuses the same API instance to avoid recreating OAuth objects
+ */
+async function getApiInstance(organization, project, clientId, patToken) {
+    // If we have a cached instance and settings haven't changed, reuse it
+    if (cachedApi && 
+        cachedApi.organization === organization && 
+        cachedApi.project === project) {
+        return cachedApi;
+    }
+    
+    // Create new API instance and cache it
+    cachedApi = await AzureDevOpsAPI.createWithStoredAuth(
+        organization,
+        project,
+        clientId,
+        patToken
+    );
+    
+    return cachedApi;
+}
+
+/**
+ * Clear API cache (call when settings change)
+ */
+function clearApiCache() {
+    cachedApi = null;
+}
+
 // Load settings when the content script is initialized
 function loadSettings() {
     // Use Chrome storage API to load all settings
-    chrome.storage.sync.get(['issueTag', 'userStoryTag', 'formatSeparator', 'branchHotfixVersion', 'tableData','adoOrganization', 'adoProject', 'enableBuildStatus'], function(syncResult) {
+    chrome.storage.sync.get([
+        'issueTag', 'userStoryTag', 'formatSeparator', 'branchHotfixVersion', 'tableData',
+        'adoOrganization', 'adoProject', 'authMethod', 'adoClientId'
+    ], function(syncResult) {
         chrome.storage.local.get(['adoPatToken'], async function(localResult) {
-            // Merge results, preferring local token
-            const result = { ...syncResult, adoPatToken: localResult.adoPatToken };
+            // Merge results
+            const result = { 
+                ...syncResult, 
+                adoPatToken: localResult.adoPatToken 
+            };
 
             extensionSettings = {
                 issueTag: result.issueTag,
@@ -63,34 +100,30 @@ function loadSettings() {
                 adoOrganization: result.adoOrganization,
                 adoProject: result.adoProject,
                 adoPatToken: result.adoPatToken,
-                enableBuildStatus: result.enableBuildStatus
+                authMethod: result.authMethod || 'oauth'
             };
             
             // Create a safe copy for logging
             const safeSettings = { ...extensionSettings };
             if (safeSettings.adoPatToken) safeSettings.adoPatToken = '***';
             console.log('Settings loaded:', safeSettings);
-
-             if (!result.enableBuildStatus) return;
-            // Initialize API
-            const api = new AzureDevOpsAPI(
-                result.adoOrganization,
-                result.adoProject,
-                result.adoPatToken
-            );
             
-            // Get build status for a work item
-            const workItemId = 12345; // Extract from your page
+            // Clear cache when settings change to ensure fresh API instance
+            clearApiCache();
+            
             try {
-                const branchStatus = await api.getWorkItemBranchStatus(workItemId);
-                
-                // Get icon configuration
-                const icon = AzureDevOpsAPI.getBuildStatusIcon(branchStatus.overallStatus);
-                
-                // Add icon to your page (you'll implement this)
-                addIconToTicket(workItemId, icon.emoji, icon.color, icon.title);
+                // Pre-cache the API instance for later use
+                if (result.adoOrganization && result.adoProject) {
+                    await getApiInstance(
+                        result.adoOrganization,
+                        result.adoProject,
+                        result.adoClientId,
+                        result.adoPatToken
+                    );
+                    console.log('API instance cached and ready');
+                }
             } catch (error) {
-                console.error('Error fetching build status:', error);
+                console.error('Error caching API instance:', error);
             }
         });
     });
@@ -424,67 +457,67 @@ async function initializeBoardBuildStatus() {
             console.log('Board wrapper found, proceeding with initialization');
 
             const settings = await new Promise((resolve) => {
-                chrome.storage.sync.get(['adoOrganization', 'adoProject', 'enableBuildStatus'], (syncResult) => {
+                chrome.storage.sync.get(['adoOrganization', 'adoProject', 'authMethod', 'adoClientId'], (syncResult) => {
                     chrome.storage.local.get(['adoPatToken'], (localResult) => {
                         resolve({ ...syncResult, adoPatToken: localResult.adoPatToken });
                     });
                 });
             });
     
-            if (!settings.enableBuildStatus) {
-                console.log('Build status icons disabled in settings');
+            if (!settings.adoOrganization || !settings.adoProject) {
+                console.log('Azure DevOps API not fully configured');
                 return;
             }
     
-            if (!settings.adoOrganization || !settings.adoProject || !settings.adoPatToken) {
-                console.log('Azure DevOps API not configured');
-                return;
-            }
+            try {
+                // Get cached API instance
+                const api = await getApiInstance(
+                    settings.adoOrganization,
+                    settings.adoProject,
+                    settings.adoClientId,
+                    settings.adoPatToken
+                );
     
-            // Initialize API
-            const api = new AzureDevOpsAPI(
-                settings.adoOrganization,
-                settings.adoProject,
-                settings.adoPatToken
-            );
+                // Get all tickets on the board
+                const tickets = getBoardTickets();
+                console.log(`Found ${tickets.length} tickets on board`);
     
-            // Get all tickets on the board
-            const tickets = getBoardTickets();
-            console.log(`Found ${tickets.length} tickets on board`);
-    
-            if (tickets.length > 0) {
-                // Collect IDs
-                const ticketIds = tickets.map(t => t.id);
-                
-                // Fetch statuses in batch
-                try {
-                    const statuses = await api.getWorkItemsStatuses(ticketIds);
+                if (tickets.length > 0) {
+                    // Collect IDs
+                    const ticketIds = tickets.map(t => t.id);
                     
-                    // Update UI
-                    for (const ticket of tickets) {
-                        const status = statuses[ticket.id];
-                        if (status) {
-                            const { branchStatus, prStatus } = status;
-        
-                            // PR Status
-                            const prIcon = AzureDevOpsAPI.getPrStatusIcon(prStatus.overallStatus);
-                            addIconToTicket(ticket.element, ticket.id, prIcon.emoji, prIcon.color, 'PRs: '+ prIcon.title, 'pr');
-        
-                            // Branch Status
-                            // Skip if no branches and PRs are completed
-                            if (!((branchStatus.overallStatus == 'none') && (prStatus.overallStatus == 'completed'))) {
-                                const branchIcon = AzureDevOpsAPI.getBuildStatusIcon(branchStatus.overallStatus);
-                                addIconToTicket(ticket.element, ticket.id, branchIcon.emoji, branchIcon.color, 'Branches: '+ branchIcon.title, 'branch');
+                    // Fetch statuses in batch
+                    try {
+                        const statuses = await api.getWorkItemsStatuses(ticketIds);
+                        
+                        // Update UI
+                        for (const ticket of tickets) {
+                            const status = statuses[ticket.id];
+                            if (status) {
+                                const { branchStatus, prStatus } = status;
+            
+                                // PR Status
+                                const prIcon = AzureDevOpsAPI.getPrStatusIcon(prStatus.overallStatus);
+                                addIconToTicket(ticket.element, ticket.id, prIcon.emoji, prIcon.color, 'PRs: '+ prIcon.title, 'pr');
+            
+                                // Branch Status
+                                // Skip if no branches and PRs are completed
+                                if (!((branchStatus.overallStatus == 'none') && (prStatus.overallStatus == 'completed'))) {
+                                    const branchIcon = AzureDevOpsAPI.getBuildStatusIcon(branchStatus.overallStatus);
+                                    addIconToTicket(ticket.element, ticket.id, branchIcon.emoji, branchIcon.color, 'Branches: '+ branchIcon.title, 'branch');
+                                }
                             }
                         }
+                    } catch (error) {
+                        console.error('Error fetching batch statuses:', error);
                     }
-                } catch (error) {
-                    console.error('Error fetching batch statuses:', error);
                 }
-            }
     
-            // Watch for new cards being added (when columns are expanded/collapsed or cards moved)
-            observeBoardChanges(api);
+                // Watch for new cards being added (when columns are expanded/collapsed or cards moved)
+                observeBoardChanges(api);
+            } catch (error) {
+                console.error('Error initializing API:', error);
+            }
 
         } else if (attempts >= maxAttempts) {
             clearInterval(checkBoardInterval);

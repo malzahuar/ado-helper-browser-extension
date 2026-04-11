@@ -44,11 +44,30 @@ Configure the extension to match your team's workflow via the Options page.
 
 To enable the Build and PR status features, you must configure your Azure DevOps details:
 
-1. Click the extension icon in your browser toolbar and select **Options** (or right-click the extension > Extension Options).
+### Step 1: Basic Settings
+1. Click the extension icon in your browser toolbar and select **Options**.
 2. Enter your **Organization Name** and **Project Name**.
-3. Enter a **Personal Access Token (PAT)**.
-   - *Note: The PAT requires `Build (Read)`, `Code (Read)`, and `Work Items (Read)` scopes.*
+
+### Step 2: Choose Authentication Method
+
+#### Option A: OAuth (Recommended)
+1. Select **"OAuth (Recommended)"** as the authentication method.
+2. The **OAuth Client ID** field comes pre-filled with a default value.
+3. Click **"Sign In with Microsoft"** and complete the authentication.
 4. Click **Save**.
+
+**For Company Employees:**  
+If this is the first sign-in from your company, your IT admin will see an approval prompt. Once approved, all employees get instant access.
+
+**For Individual Users:**  
+Sign in with your personal Microsoft account - instant access, no approval needed.
+
+**Note:** If your admin provided a custom OAuth app, clear the Client ID field and enter theirs instead. For detailed OAuth setup instructions, see [ENTRA ID Setup Guide](ENTRA_ID_ADMIN_SETUP.md).
+
+#### Option B: Personal Access Token (PAT)
+1. Select **"Personal Access Token"** as the authentication method.
+2. Enter your **Personal Access Token** (requires `Build (Read)`, `Code (Read)`, and `Work Items (Read)` scopes).
+3. Click **Save**.
 
 ## 📖 Usage
 
@@ -73,8 +92,13 @@ To make changes to the extension:
 4. Click the **Reload** button (circular arrow icon).
 5. Refresh your Azure DevOps page to see the changes.
 
-## 🔒 Security Note
-Your Personal Access Token (PAT) is stored locally in your browser using the `chrome.storage.sync` API. It is never sent to any third-party server; it is only used to communicate directly with the Azure DevOps REST API.
+## 🔒 Security
+
+**OAuth (Recommended):**  
+Tokens are short-lived and stored securely in your browser. They are never sent to any third-party server; they are only used to communicate directly with the Azure DevOps REST API.
+
+**Personal Access Token (PAT):**  
+Your PAT is stored locally in your browser using the `chrome.storage.sync` API. It is never sent to any third-party server; it is only used to communicate directly with the Azure DevOps REST API.
 
 ## 📜 Version History
 

@@ -3,8 +3,6 @@ chrome.runtime.onInstalled.addListener((details) => {
     if (details.reason === 'install') {
         console.log('Extension installed, loading default settings...');
         loadDefaultSettings();
-    } else if (details.reason === 'update') {
-        console.log('Extension updated');
     }
 });
 
@@ -26,26 +24,20 @@ function loadDefaultSettings() {
                 branchHotfixVersion: data.branchHotfixVersion || '{major}{minor}',
                 adoOrganization: data.adoOrganization || '',
                 adoProject: data.adoProject || '',
-                enableBuildStatus: data.enableBuildStatus || false,
-                tableData: data.tableData || []
-            };
-            
-            const defaultToken = {
-                adoPatToken: data.adoPatToken || ''
+                tableData: data.tableData || [],
+                // OAuth configuration (to be filled by user)
+                adoClientId: data.adoClientId || ''
             };
 
             console.log('Saving default settings to storage:', defaultSettings);
             
-            // Save default token to local storage
-            chrome.storage.local.set(defaultToken, () => {
-                // Save default settings to Chrome storage
-                chrome.storage.sync.set(defaultSettings, () => {
-                    if (chrome.runtime.lastError) {
-                        console.error('Error saving default settings:', chrome.runtime.lastError);
-                    } else {
-                        console.log('Default settings saved successfully to storage');
-                    }
-                });
+            // Save default settings to Chrome storage
+            chrome.storage.sync.set(defaultSettings, () => {
+                if (chrome.runtime.lastError) {
+                    console.error('Error saving default settings:', chrome.runtime.lastError);
+                } else {
+                    console.log('Default settings saved successfully to storage');
+                }
             });
         })
         .catch(error => {

@@ -1,5 +1,11 @@
+// Global OAuth instance
+let oauth = null;
+
 // Load saved options when the page loads
 document.addEventListener('DOMContentLoaded', () => {
+    // Initialize authentication UI
+    initializeAuthenticationUI();
+    
     chrome.storage.sync.get([
         'issueTag', 
         'userStoryTag', 
@@ -8,15 +14,12 @@ document.addEventListener('DOMContentLoaded', () => {
         'tableData',
         'adoOrganization',
         'adoProject',
-        'enableBuildStatus'
+        'adoClientId',
+        'authMethod'
     ], (syncResult) => {
         chrome.storage.local.get(['adoPatToken'], (localResult) => {
-            const result = { ...syncResult, adoPatToken: localResult.adoPatToken };
-            
-            // Create a safe copy for logging that doesn't include the token
-            const safeResult = { ...result };
-            if (safeResult.adoPatToken) safeResult.adoPatToken = '***';
-            console.log('Loading settings from storage:', safeResult);
+            const result = syncResult;
+            console.log('Loading settings from storage');
             
             // Load from storage
             if (result.issueTag) {
@@ -39,11 +42,24 @@ document.addEventListener('DOMContentLoaded', () => {
             if (result.adoProject) {
                 document.getElementById('ado-project').value = result.adoProject;
             }
-            if (result.adoPatToken) {
-                document.getElementById('ado-pat-token').value = result.adoPatToken;
+            if (result.adoClientId) {
+                document.getElementById('ado-client-id').value = result.adoClientId;
             }
-            if (result.enableBuildStatus !== undefined) {
-                document.getElementById('enable-build-status').checked = result.enableBuildStatus;
+            
+            // Load authentication method (default to OAuth if not set)
+            const authMethod = result.authMethod || (localResult.adoPatToken ? 'pat' : 'oauth');
+            document.getElementById('auth-' + authMethod).checked = true;
+            updateAuthenticationUI();
+            
+            // Load PAT if exists
+            if (localResult.adoPatToken) {
+                document.getElementById('ado-pat-token').value = localResult.adoPatToken;
+            }
+            
+            // Initialize OAuth if client ID is set
+            if (result.adoClientId) {
+                oauth = new OAuth(result.adoClientId);
+                updateAuthenticationStatus();
             }
             
             // Load table data
@@ -57,7 +73,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 
-
     // Add event listener for the "Add Row" button
     document.querySelector('.add-row-btn').addEventListener('click', () => {
         addRow();
@@ -68,6 +83,177 @@ document.addEventListener('DOMContentLoaded', () => {
         loadDefaultData();
     });
 });
+
+// Initialize authentication UI with event listeners
+function initializeAuthenticationUI() {
+    // Generate and display redirect URI
+    const redirectUri = `https://${chrome.runtime.id}.chromiumapp.org/`;
+    const redirectUriField = document.getElementById('redirect-uri');
+    if (redirectUriField) {
+        redirectUriField.value = redirectUri;
+    }
+    
+    // Copy redirect URI button
+    const copyBtn = document.getElementById('copy-redirect-uri-btn');
+    if (copyBtn) {
+        copyBtn.addEventListener('click', () => {
+            const redirectUriField = document.getElementById('redirect-uri');
+            redirectUriField.select();
+            document.execCommand('copy');
+            showToast('Redirect URI copied to clipboard!');
+        });
+    }
+    
+    // Auth method radio buttons
+    const authRadios = document.querySelectorAll('input[name="auth-method"]');
+    authRadios.forEach(radio => {
+        radio.addEventListener('change', () => {
+            updateAuthenticationUI();
+        });
+    });
+    
+    // OAuth buttons
+    const loginBtn = document.getElementById('oauth-login-btn');
+    const logoutBtn = document.getElementById('oauth-logout-btn');
+    const loadDefaultBtn = document.getElementById('load-default-client-id-btn');
+    
+    if (loginBtn) {
+        loginBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            await handleOAuthLogin();
+        });
+    }
+    
+    if (logoutBtn) {
+        logoutBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            await handleOAuthLogout();
+        });
+    }
+    
+    // Load default OAuth Client ID button
+    if (loadDefaultBtn) {
+        loadDefaultBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            loadDefaultClientId();
+        });
+    }
+}
+
+// Update authentication UI based on selected method
+function updateAuthenticationUI() {
+    const selectedMethod = document.querySelector('input[name="auth-method"]:checked').value;
+    const oauthSection = document.getElementById('oauth-section');
+    const patSection = document.getElementById('pat-section');
+    
+    if (selectedMethod === 'oauth') {
+        oauthSection.style.display = 'block';
+        patSection.style.display = 'none';
+    } else {
+        oauthSection.style.display = 'none';
+        patSection.style.display = 'block';
+    }
+}
+
+// Handle OAuth login
+async function handleOAuthLogin() {
+    try {
+        if (!oauth) {
+            showToast('OAuth not configured. Please add your Client ID in settings.', 'error');
+            return;
+        }
+        
+        const loginBtn = document.getElementById('oauth-login-btn');
+        loginBtn.disabled = true;
+        loginBtn.textContent = 'Signing in...';
+        
+        const tokenResponse = await oauth.login();
+        console.log('OAuth login successful');
+        
+        // Update UI
+        updateAuthenticationStatus();
+        showToast('Successfully signed in!');
+        
+    } catch (error) {
+        console.error('OAuth login error:', error);
+        showToast('Sign in failed: ' + error.message, 'error');
+    } finally {
+        const loginBtn = document.getElementById('oauth-login-btn');
+        loginBtn.disabled = false;
+        loginBtn.textContent = 'Sign In with Microsoft';
+    }
+}
+
+// Handle OAuth logout
+async function handleOAuthLogout() {
+    try {
+        if (!oauth) return;
+        
+        const logoutBtn = document.getElementById('oauth-logout-btn');
+        logoutBtn.disabled = true;
+        logoutBtn.textContent = 'Signing out...';
+        
+        await oauth.logout();
+        console.log('OAuth logout successful');
+        
+        // Update UI
+        updateAuthenticationStatus();
+        showToast('Successfully signed out!');
+        
+    } catch (error) {
+        console.error('OAuth logout error:', error);
+        showToast('Sign out failed: ' + error.message, 'error');
+    } finally {
+        const logoutBtn = document.getElementById('oauth-logout-btn');
+        logoutBtn.disabled = false;
+        logoutBtn.textContent = 'Sign Out';
+    }
+}
+
+// Update authentication status display
+async function updateAuthenticationStatus() {
+    if (!oauth) return;
+    
+    const isAuthenticated = await oauth.isAuthenticated();
+    const authStatus = document.getElementById('auth-status');
+    const authStatusText = document.getElementById('auth-status-text');
+    const loginBtn = document.getElementById('oauth-login-btn');
+    const logoutBtn = document.getElementById('oauth-logout-btn');
+    
+    if (isAuthenticated) {
+        authStatus.style.display = 'block';
+        authStatus.style.background = 'rgba(16, 124, 16, 0.1)';
+        authStatusText.style.color = 'var(--success-color)';
+        authStatusText.textContent = '✓ Signed in with Microsoft Entra ID';
+        loginBtn.style.display = 'none';
+        logoutBtn.style.display = 'block';
+    } else {
+        authStatus.style.display = 'block';
+        authStatus.style.background = 'rgba(212, 52, 56, 0.1)';
+        authStatusText.style.color = 'var(--danger-color)';
+        authStatusText.textContent = '✗ Not signed in';
+        loginBtn.style.display = 'block';
+        logoutBtn.style.display = 'none';
+    }
+}
+
+// Load default OAuth Client ID from defaultData.json
+function loadDefaultClientId() {
+    fetch(chrome.runtime.getURL('src/defaultData.json'))
+        .then(response => response.json())
+        .then(data => {
+            if (data.adoClientId) {
+                document.getElementById('ado-client-id').value = data.adoClientId;
+                showToast('Default OAuth Client ID loaded!');
+            } else {
+                showToast('Default Client ID not found', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error loading default Client ID:', error);
+            showToast('Failed to load default Client ID', 'error');
+        });
+}
 
 // Function to add a new row to the table
 function addRow(col1 = '', col2 = '') {
@@ -296,7 +482,9 @@ function showToast(message, type = 'success') {
 // Save settings function
 function saveSettings() {
     const tableData = getTableData();
+    const authMethod = document.querySelector('input[name="auth-method"]:checked').value;
     const adoPatToken = document.getElementById('ado-pat-token').value;
+    const adoClientId = document.getElementById('ado-client-id').value;
 
     const settings = {
         issueTag: document.getElementById('issue-tag').value,
@@ -306,26 +494,49 @@ function saveSettings() {
         tableData: tableData,
         adoOrganization: document.getElementById('ado-organization').value,
         adoProject: document.getElementById('ado-project').value,
-        enableBuildStatus: document.getElementById('enable-build-status').checked
+        authMethod: authMethod,
+        adoClientId: adoClientId
     };
 
-    console.log('Saving settings:', settings);
+    console.log('Saving settings with auth method:', authMethod);
     
-    // Save token to local storage
-    chrome.storage.local.set({ adoPatToken }, () => {
-        // Save other settings to sync storage
-        chrome.storage.sync.set(settings, () => {
-            // Remove token from sync storage if it exists (cleanup)
-            chrome.storage.sync.remove('adoPatToken');
-
+    // Save settings to sync storage
+    chrome.storage.sync.set(settings, () => {
+        // Save PAT token to local storage if using PAT
+        if (authMethod === 'pat' && adoPatToken) {
+            chrome.storage.local.set({ adoPatToken }, () => {
+                if (chrome.runtime.lastError) {
+                    console.error('Error saving PAT token:', chrome.runtime.lastError);
+                    showToast('Error saving PAT token: ' + chrome.runtime.lastError.message, 'error');
+                } else {
+                    console.log('Settings saved successfully');
+                    // Re-initialize OAuth with new Client ID if it changed
+                    if (adoClientId) {
+                        oauth = new OAuth(adoClientId);
+                        updateAuthenticationStatus();
+                    }
+                    showToast('Options saved!');
+                }
+            });
+        } else {
+            // If switched from PAT to OAuth, clear PAT token
+            if (authMethod === 'oauth') {
+                chrome.storage.local.remove('adoPatToken');
+            }
+            
             if (chrome.runtime.lastError) {
                 console.error('Error saving:', chrome.runtime.lastError);
                 showToast('Error saving options: ' + chrome.runtime.lastError.message, 'error');
             } else {
                 console.log('Settings saved successfully');
+                // Re-initialize OAuth with new Client ID if it changed
+                if (adoClientId) {
+                    oauth = new OAuth(adoClientId);
+                    updateAuthenticationStatus();
+                }
                 showToast('Options saved!');
             }
-        });
+        }
     });
 }
 
