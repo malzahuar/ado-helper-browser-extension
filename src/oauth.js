@@ -6,7 +6,7 @@
 class OAuth {
     constructor(clientId) {
         this.clientId = (clientId || '').trim();
-        this.redirectUri = chrome.identity.getRedirectURL();
+        this.redirectUri = chrome.identity?.getRedirectURL() ?? null;
         this.authority = 'https://login.microsoftonline.com/common/oauth2/v2.0';
         // Explicit ADO delegated scopes — avoids pulling in User.Read via /.default.
         // Format: {resource-id}/{scope} space-separated, per Entra v2.0 spec.

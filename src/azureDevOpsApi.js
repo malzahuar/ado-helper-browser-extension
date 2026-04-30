@@ -57,7 +57,6 @@ class AzureDevOpsAPI {
                 } else if (authMethod === 'oauth' && clientId) {
                     // Use OAuth authentication
                     console.log(('Using OAuth authentication'));
-                    const OAuth = window.OAuth;  // OAuth class should be available globally
                     const oauth = new OAuth(clientId);
                     AzureDevOpsAPI.createWithOAuth(organization, project, oauth)
                         .then(instance => resolve(instance))
