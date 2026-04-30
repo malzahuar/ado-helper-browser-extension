@@ -5,10 +5,17 @@
 
 class OAuth {
     constructor(clientId) {
-        this.clientId = clientId;
+        this.clientId = (clientId || '').trim();
         this.redirectUri = chrome.identity.getRedirectURL();
         this.authority = 'https://login.microsoftonline.com/common/oauth2/v2.0';
-        this.scope = 'https://management.azure.com/.default';
+        // Explicit ADO delegated scopes — avoids pulling in User.Read via /.default.
+        // Format: {resource-id}/{scope} space-separated, per Entra v2.0 spec.
+        this.scope = [
+            '499b84ac-1321-427f-aa17-267ca6975798/vso.work',
+            '499b84ac-1321-427f-aa17-267ca6975798/vso.code',
+            '499b84ac-1321-427f-aa17-267ca6975798/vso.build',
+            'offline_access'
+        ].join(' ');
         this.tokenStorageKey = 'entraIdToken';
         this.expiryStorageKey = 'entraIdTokenExpiry';
     }
@@ -22,12 +29,45 @@ class OAuth {
     }
 
     /**
+     * Generate a PKCE code verifier (random URL-safe string)
+     * @private
+     * @returns {string} Code verifier
+     */
+    generateCodeVerifier() {
+        const array = new Uint8Array(32);
+        crypto.getRandomValues(array);
+        return btoa(String.fromCharCode(...array))
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=/g, '');
+    }
+
+    /**
+     * Generate a PKCE code challenge from a verifier (BASE64URL(SHA-256(verifier)))
+     * @private
+     * @param {string} verifier - The code verifier
+     * @returns {Promise<string>} Code challenge
+     */
+    async generateCodeChallenge(verifier) {
+        const data = new TextEncoder().encode(verifier);
+        const digest = await crypto.subtle.digest('SHA-256', data);
+        return btoa(String.fromCharCode(...new Uint8Array(digest)))
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=/g, '');
+    }
+
+    /**
      * Initiate OAuth login flow
      * @returns {Promise<Object>} Token response { access_token, token_type, expires_in }
      */
     async login() {
         try {
-            const authUrl = this.buildAuthUrl();
+            // Generate PKCE pair — required for SPA client type in Entra ID.
+            const codeVerifier = this.generateCodeVerifier();
+            const codeChallenge = await this.generateCodeChallenge(codeVerifier);
+
+            const authUrl = this.buildAuthUrl(codeChallenge);
             console.log('Initiating OAuth login flow...');
 
             // Launch the web auth flow
@@ -49,18 +89,15 @@ class OAuth {
                 );
             });
 
-            // Extract authorization code from redirect URL
+            // Extract authorization code from redirect URL and surface OAuth errors clearly.
             const code = this.extractAuthCode(responseUrl);
-            if (!code) {
-                throw new Error('Failed to extract authorization code from response');
-            }
 
             // Exchange authorization code for tokens
-            const tokenResponse = await this.exchangeCodeForToken(code);
-            
+            const tokenResponse = await this.exchangeCodeForToken(code, codeVerifier);
+
             // Store token and expiry time
             await this.storeToken(tokenResponse);
-            
+
             console.log('OAuth login successful');
             return tokenResponse;
         } catch (error) {
@@ -72,16 +109,19 @@ class OAuth {
     /**
      * Build the authorization URL
      * @private
+     * @param {string} codeChallenge - PKCE code challenge
      * @returns {string} The authorization URL
      */
-    buildAuthUrl() {
+    buildAuthUrl(codeChallenge) {
         const params = new URLSearchParams({
             client_id: this.clientId,
             redirect_uri: this.redirectUri,
             response_type: 'code',
             scope: this.scope,
             response_mode: 'query',
-            prompt: 'select_account'
+            prompt: 'select_account',
+            code_challenge: codeChallenge,
+            code_challenge_method: 'S256'
         });
 
         return `${this.authority}/authorize?${params.toString()}`;
@@ -94,17 +134,68 @@ class OAuth {
      * @returns {string|null} The authorization code or null if not found
      */
     extractAuthCode(redirectUrl) {
+        const payload = this.parseOAuthResponse(redirectUrl);
+
+        if (payload.error) {
+            const description = payload.error_description || payload.error;
+            throw new Error(`OAuth authorization failed: ${description}`);
+        }
+
+        if (!payload.code) {
+            throw new Error(
+                'Failed to extract authorization code from response. Verify your app registration redirect URI matches exactly: ' +
+                this.redirectUri
+            );
+        }
+
+        return payload.code;
+    }
+
+    /**
+     * Parse OAuth callback data from both query string and fragment.
+     * @private
+     * @param {string} redirectUrl - The redirect URL returned by launchWebAuthFlow
+     * @returns {{code: string|null, error: string|null, error_description: string|null}}
+     */
+    parseOAuthResponse(redirectUrl) {
         const url = new URL(redirectUrl);
-        return url.searchParams.get('code');
+
+        const extract = (params) => ({
+            code: params.get('code'),
+            error: params.get('error'),
+            error_description: params.get('error_description')
+        });
+
+        // Prefer explicit query payload when response_mode=query is honored.
+        let payload = extract(url.searchParams);
+        if (payload.code || payload.error) {
+            return payload;
+        }
+
+        // Some providers/policies can still send data in the fragment.
+        const hash = url.hash ? url.hash.substring(1) : '';
+        if (hash) {
+            payload = extract(new URLSearchParams(hash));
+            if (payload.code || payload.error) {
+                return payload;
+            }
+        }
+
+        return {
+            code: null,
+            error: null,
+            error_description: null
+        };
     }
 
     /**
      * Exchange authorization code for tokens
      * @private
      * @param {string} code - The authorization code
+     * @param {string} codeVerifier - PKCE code verifier matching the challenge sent in the auth request
      * @returns {Promise<Object>} Token response
      */
-    async exchangeCodeForToken(code) {
+    async exchangeCodeForToken(code, codeVerifier) {
         try {
             const response = await fetch(`${this.authority}/token`, {
                 method: 'POST',
@@ -116,7 +207,8 @@ class OAuth {
                     code: code,
                     redirect_uri: this.redirectUri,
                     grant_type: 'authorization_code',
-                    scope: this.scope
+                    scope: this.scope,
+                    code_verifier: codeVerifier
                 })
             });
 

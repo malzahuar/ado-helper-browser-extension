@@ -43,7 +43,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 document.getElementById('ado-project').value = result.adoProject;
             }
             if (result.adoClientId) {
-                document.getElementById('ado-client-id').value = result.adoClientId;
+                document.getElementById('ado-client-id').value = result.adoClientId.trim();
             }
             
             // Load authentication method (default to OAuth if not set)
@@ -484,7 +484,7 @@ function saveSettings() {
     const tableData = getTableData();
     const authMethod = document.querySelector('input[name="auth-method"]:checked').value;
     const adoPatToken = document.getElementById('ado-pat-token').value;
-    const adoClientId = document.getElementById('ado-client-id').value;
+    const adoClientId = document.getElementById('ado-client-id').value.trim();
 
     const settings = {
         issueTag: document.getElementById('issue-tag').value,

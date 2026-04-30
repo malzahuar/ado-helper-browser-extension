@@ -42,15 +42,28 @@ If an admin needs a **different** Client ID and Redirect URI, they can override 
 3. Select **Azure DevOps**
 4. Select **Delegated permissions**
 5. Check these scopes:
-   - `user_impersonation`
+  - `vso.code` (Code - Read)
+  - `vso.build` (Build - Read)
+  - `vso.work` (Work Items - Read)
 6. Click **Add permissions**
+7. In **API permissions**, verify **Microsoft Graph** includes delegated `User.Read`:
+   - If it is already present (default in many app registrations), keep it.
+   - If it is missing, add **Microsoft Graph** → **Delegated permissions** → `User.Read`.
+
+🔐 **Why `User.Read` is needed:**
+- It enables the delegated OAuth sign-in consent entry ("Sign in and read user profile").
+- It is used for user authentication context and does **not** grant extra Azure DevOps REST API access.
 
 🔐 **What these permissions allow:**
 - **Read Work Items** - View Azure DevOps work items
 - **Read Code** - Access repositories
 - **Read Build** - View build pipelines and status
 
-7. Click **Grant admin consent for [Your Tenant Name]**
+⚠️ **Important:** Avoid selecting `user_impersonation` for this extension. It grants broad REST API access and causes a much wider consent prompt.
+
+ℹ️ **Expected consent prompt:** Users can still see a baseline sign-in permission (for example, "Sign in and read user profile"). This is required for delegated OAuth authentication and does **not** grant extra Azure DevOps API access beyond the configured read scopes.
+
+8. Click **Grant admin consent for [Your Tenant Name]**
 
 ## Step 3: Get Client ID
 
@@ -89,6 +102,7 @@ Share the Client ID from Step 3 with users:
   - [ ] Single-Tenant: "Accounts in this organizational directory only"
 - [ ] Added redirect URI: `https://<extension-id>.chromiumapp.org/`
 - [ ] Configured Azure DevOps API permissions
+- [ ] Verified Microsoft Graph delegated `User.Read` is present
 - [ ] Granted admin consent in your tenant
 - [ ] Copied Client ID
 
@@ -96,6 +110,7 @@ Share the Client ID from Step 3 with users:
 - [ ] Set appropriate token lifetime (1 hour recommended)
 - [ ] Configured Conditional Access/MFA if needed
 - [ ] Enabled audit logging for compliance
+- [ ] Confirmed baseline delegated sign-in consent is approved by admin policy
 - [ ] Tested with personal Microsoft account user
 - [ ] Tested with corporate user from different company
 

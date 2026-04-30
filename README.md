@@ -62,6 +62,8 @@ If this is the first sign-in from your company, your IT admin will see an approv
 **For Individual Users:**  
 Sign in with your personal Microsoft account - instant access, no approval needed.
 
+**Consent Note:** OAuth delegated sign-in may also show a baseline "Sign in and read user profile" permission. This is required to authenticate the user and does not increase Azure DevOps API access beyond `Code (Read)`, `Build (Read)`, and `Work Items (Read)`.
+
 **Note:** If your admin provided a custom OAuth app, clear the Client ID field and enter theirs instead. For detailed OAuth setup instructions, see [ENTRA ID Setup Guide](ENTRA_ID_ADMIN_SETUP.md).
 
 #### Option B: Personal Access Token (PAT)
