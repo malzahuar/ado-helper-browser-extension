@@ -158,10 +158,21 @@ function updateAuthenticationUI() {
 // Handle OAuth login
 async function handleOAuthLogin() {
     try {
-        if (!oauth) {
+        const currentClientId = document.getElementById('ado-client-id').value.trim();
+        if (!currentClientId) {
             showToast('OAuth not configured. Please add your Client ID in settings.', 'error');
             return;
         }
+
+        // Client IDs for Entra app registrations are GUIDs.
+        const clientIdGuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+        if (!clientIdGuidRegex.test(currentClientId)) {
+            showToast('Invalid Client ID format. Expected GUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).', 'error');
+            return;
+        }
+
+        // Always rebuild from the current input so Sign-In never uses stale in-memory config.
+        oauth = new OAuth(currentClientId);
         
         const loginBtn = document.getElementById('oauth-login-btn');
         loginBtn.disabled = true;
