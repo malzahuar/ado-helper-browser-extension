@@ -3,6 +3,84 @@ let extensionSettings = {};
 let lastUrl = window.location.href;
 let cachedApi = null; // Cache the API instance
 
+const BOARD_STATUS_PAGE_PATHS = ['/_boards/board/', '/_sprints/taskboard/'];
+const BOARD_WRAPPER_SELECTORS = [
+    '.board-wrapper.page-content-top.flex-column.flex-grow',
+    '.vss-Splitter--container.vss-Splitter--container-row'
+];
+const BOARD_CARD_SELECTORS = [
+    '.card-content'
+];
+const PRIMARY_BOARD_CARD_SELECTOR = '.boards-card, .taskboard-card, .taskboard-work-item-card';
+
+let boardMutationObserver = null;
+
+function isBoardStatusPage(url = window.location.href) {
+    return BOARD_STATUS_PAGE_PATHS.some(path => url.includes(path));
+}
+
+function getBoardWrapperElement() {
+    for (const selector of BOARD_WRAPPER_SELECTORS) {
+        const wrapper = document.querySelector(selector);
+        if (wrapper) {
+            return wrapper;
+        }
+    }
+    return null;
+}
+
+function extractWorkItemIdFromElement(element) {
+    if (!element) return null;
+
+    const idCandidates = [
+        element.querySelector('.selectable-text')?.textContent,
+        element.getAttribute('data-id'),
+        element.getAttribute('data-work-item-id'),
+        element.getAttribute('data-workitemid'),
+        element.querySelector('[data-id]')?.getAttribute('data-id'),
+        element.querySelector('[data-work-item-id]')?.getAttribute('data-work-item-id'),
+        element.querySelector('.id')?.textContent
+    ];
+
+    const workItemLink = element.querySelector('a[href*="/_workitems/edit/"]');
+    if (workItemLink) {
+        const hrefMatch = workItemLink.getAttribute('href')?.match(/\/_workitems\/edit\/(\d+)/);
+        if (hrefMatch?.[1]) {
+            idCandidates.push(hrefMatch[1]);
+        }
+    }
+
+    for (const candidate of idCandidates) {
+        const numericMatch = candidate?.trim().match(/\d+/);
+        if (!numericMatch) continue;
+
+        const parsedId = Number.parseInt(numericMatch[0], 10);
+        if (Number.isInteger(parsedId) && parsedId > 0) {
+            return parsedId;
+        }
+    }
+
+    return null;
+}
+
+function getTicketCardsFromNode(node) {
+    if (!(node instanceof Element)) return [];
+
+    const discoveredCards = [];
+    const selector = BOARD_CARD_SELECTORS.join(', ');
+    if (node.matches(selector)) {
+        discoveredCards.push(node);
+    }
+    discoveredCards.push(...node.querySelectorAll(selector));
+
+    return discoveredCards;
+}
+
+function getCardContainerElement(element) {
+    if (!(element instanceof Element)) return null;
+    return element.closest(PRIMARY_BOARD_CARD_SELECTOR) || element;
+}
+
 // Function to show toast notification
 function showNotification(message, type = 'info') {
     const toast = document.createElement('div');
@@ -151,8 +229,8 @@ window.addEventListener('load', () => {
     // Call loadSettings when the script is loaded
     loadSettings();
     
-    // Initialize board build status if on boards page
-    if (window.location.href.includes('/_boards/board/')) {
+    // Initialize board build status if on a supported board/taskboard page
+    if (isBoardStatusPage()) {
         initializeBoardBuildStatus();
     }
 
@@ -165,7 +243,7 @@ window.addEventListener('load', () => {
             // Re-initialize listeners
             addCreateBranchDialogListener();
             
-            if (window.location.href.includes('/_boards/board/')) {
+            if (isBoardStatusPage()) {
                 initializeBoardBuildStatus();
             }
         }
@@ -369,27 +447,27 @@ function addCreateBranchDialogListener() {
 
 // Wait for board to load
 function getBoardTickets() {
-    const boardWrapper = document.querySelector('.board-wrapper.page-content-top.flex-column.flex-grow');
+    const boardWrapper = getBoardWrapperElement();
     if (!boardWrapper) {
         console.log('Board wrapper not found');
         return [];
     }
 
-    // Find all ticket cards - you'll need to inspect to find the exact selector
-    // Common patterns:
-    const tickets = boardWrapper.querySelectorAll('.card-content'); // Option 1
+    const tickets = boardWrapper.querySelectorAll(BOARD_CARD_SELECTORS.join(', '));
 
     const ticketList = [];
+    const seenIds = new Set();
+    const seenElements = new Set();
     tickets.forEach(ticket => {
-        // Extract work item ID (adjust based on actual attribute name)
-        const workItemId = ticket.querySelector('.selectable-text')?.textContent  
-                        || ticket.getAttribute('data-id')
-                        || ticket.querySelector('.id')?.textContent;
+        const cardElement = getCardContainerElement(ticket);
+        const workItemId = extractWorkItemIdFromElement(cardElement);
         
-        if (workItemId) {
+        if (workItemId && cardElement && !seenIds.has(workItemId) && !seenElements.has(cardElement)) {
+            seenIds.add(workItemId);
+            seenElements.add(cardElement);
             ticketList.push({
-                id: parseInt(workItemId),
-                element: ticket
+                id: workItemId,
+                element: cardElement
             });
         }
     });
@@ -450,7 +528,7 @@ async function initializeBoardBuildStatus() {
     
     const checkBoardInterval = setInterval(async () => {
         attempts++;
-        const boardWrapper = document.querySelector('.board-wrapper.page-content-top.flex-column.flex-grow');
+        const boardWrapper = getBoardWrapperElement();
         
         if (boardWrapper) {
             clearInterval(checkBoardInterval);
@@ -528,8 +606,13 @@ async function initializeBoardBuildStatus() {
 
 // Observe board changes and add icons to new cards
 function observeBoardChanges(api) {
-    const boardWrapper = document.querySelector('.board-wrapper.page-content-top.flex-column.flex-grow');
+    const boardWrapper = getBoardWrapperElement();
     if (!boardWrapper) return;
+
+    if (boardMutationObserver) {
+        boardMutationObserver.disconnect();
+        boardMutationObserver = null;
+    }
 
     let pendingNodes = [];
     let timeout = null;
@@ -566,16 +649,24 @@ function observeBoardChanges(api) {
         }
     };
 
-    const observer = new MutationObserver((mutations) => {
+    boardMutationObserver = new MutationObserver((mutations) => {
         let hasNewCards = false;
+        const seenMutationKeys = new Set();
         for (const mutation of mutations) {
             for (const node of mutation.addedNodes) {
-                if (node.nodeType === 1 && node.classList?.contains('boards-card')) {
-                    const workItemId = node.querySelector('.selectable-text')?.textContent;
+                const cards = getTicketCardsFromNode(node);
+                for (const card of cards) {
+                    const cardElement = getCardContainerElement(card);
+                    const workItemId = extractWorkItemIdFromElement(cardElement);
                     if (workItemId) {
+                        const mutationKey = `${workItemId}-${cardElement.className}`;
+                        if (seenMutationKeys.has(mutationKey)) {
+                            continue;
+                        }
+                        seenMutationKeys.add(mutationKey);
                         pendingNodes.push({
-                            id: parseInt(workItemId),
-                            node: node
+                            id: workItemId,
+                            node: cardElement
                         });
                         hasNewCards = true;
                     }
@@ -590,7 +681,7 @@ function observeBoardChanges(api) {
         }
     });
 
-    observer.observe(boardWrapper, {
+    boardMutationObserver.observe(boardWrapper, {
         childList: true,
         subtree: true
     });
