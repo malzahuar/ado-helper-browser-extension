@@ -187,7 +187,8 @@ async function handleOAuthLogin() {
         
     } catch (error) {
         console.error('OAuth login error:', error);
-        showToast('Sign in failed: ' + error.message, 'error');
+        const friendlyMessage = OAuth.getUserFacingAuthMessage(error);
+        showToast('Sign in failed: ' + friendlyMessage, 'error');
     } finally {
         const loginBtn = document.getElementById('oauth-login-btn');
         loginBtn.disabled = false;

@@ -88,6 +88,24 @@ class AzureDevOpsAPI {
     }
 
     /**
+     * Detect whether an error is authentication-related.
+     * @private
+     * @param {Error|string} error - Error object or message
+     * @returns {boolean} True if this is likely an auth issue
+     */
+    isAuthError(error) {
+        const message = String(error?.message || error || '').toLowerCase();
+        return (
+            message.includes('token') ||
+            message.includes('oauth') ||
+            message.includes('sign in') ||
+            message.includes('session') ||
+            message.includes('login_required') ||
+            message.includes('interaction_required')
+        );
+    }
+
+    /**
      * Get multiple work items with relations
      * @param {Array<number>} ids - Array of work item IDs
      * @returns {Promise<Array>} Array of work items
@@ -120,6 +138,9 @@ class AzureDevOpsAPI {
             return results;
         } catch (error) {
             console.error('Error fetching work items batch:', error);
+            if (this.isAuthError(error)) {
+                throw error;
+            }
             return [];
         }
     }

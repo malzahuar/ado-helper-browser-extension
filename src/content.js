@@ -14,6 +14,7 @@ const BOARD_CARD_SELECTORS = [
 const PRIMARY_BOARD_CARD_SELECTOR = '.boards-card, .taskboard-card, .taskboard-work-item-card';
 
 let boardMutationObserver = null;
+let authNotificationShownAt = 0;
 
 function isBoardStatusPage(url = window.location.href) {
     return BOARD_STATUS_PAGE_PATHS.some(path => url.includes(path));
@@ -123,6 +124,18 @@ function showNotification(message, type = 'info') {
             newBranchDialog.removeChild(toast);
         }, 300);
     }, 3000);
+}
+
+function showAuthNotification(error) {
+    const now = Date.now();
+    const throttleMs = 15000;
+    if (now - authNotificationShownAt < throttleMs) {
+        return;
+    }
+
+    authNotificationShownAt = now;
+    const friendlyMessage = OAuth.getUserFacingAuthMessage(error);
+    showNotification(`ADO Helper: ${friendlyMessage}`, 'error');
 }
 
 /**
@@ -595,6 +608,7 @@ async function initializeBoardBuildStatus() {
                 observeBoardChanges(api);
             } catch (error) {
                 console.error('Error initializing API:', error);
+                showAuthNotification(error);
             }
 
         } else if (attempts >= maxAttempts) {
@@ -646,6 +660,7 @@ function observeBoardChanges(api) {
             }
         } catch (error) {
             console.error('Error processing new nodes:', error);
+            showAuthNotification(error);
         }
     };
 

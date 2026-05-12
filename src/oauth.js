@@ -21,6 +21,39 @@ class OAuth {
     }
 
     /**
+     * Determine if an OAuth error indicates the Microsoft web session is gone.
+     * @param {Error|string} error - Error object or message
+     * @returns {boolean} True when silent auth failed due to missing session/cookies
+     */
+    static isEntraSessionExpiredError(error) {
+        const message = String(error?.message || error || '').toLowerCase();
+        return (
+            message.includes('login_required') ||
+            message.includes('interaction_required') ||
+            message.includes('aadsts50058') ||
+            message.includes('a silent sign-in request was sent but no user is signed in') ||
+            message.includes('requires user interaction')
+        );
+    }
+
+    /**
+     * Convert auth errors into messages suitable for end users.
+     * @param {Error|string} error - Error object or message
+     * @returns {string} User-friendly message
+     */
+    static getUserFacingAuthMessage(error) {
+        if (OAuth.isEntraSessionExpiredError(error)) {
+            return 'Your Microsoft Entra session cookies have expired. Please sign in with Microsoft again.';
+        }
+
+        if (error?.message) {
+            return error.message;
+        }
+
+        return 'Authentication failed. Please sign in again.';
+    }
+
+    /**
      * Get the redirect URI for app registration
      * @returns {string} The redirect URI
      */
@@ -63,41 +96,7 @@ class OAuth {
      */
     async login() {
         try {
-            // Generate PKCE pair — required for SPA client type in Entra ID.
-            const codeVerifier = this.generateCodeVerifier();
-            const codeChallenge = await this.generateCodeChallenge(codeVerifier);
-
-            const authUrl = this.buildAuthUrl(codeChallenge);
-            console.log('Initiating OAuth login flow...');
-
-            // Launch the web auth flow
-            const responseUrl = await new Promise((resolve, reject) => {
-                chrome.identity.launchWebAuthFlow(
-                    {
-                        url: authUrl,
-                        interactive: true
-                    },
-                    (redirectUrl) => {
-                        if (chrome.runtime.lastError) {
-                            reject(new Error(chrome.runtime.lastError.message));
-                        } else if (redirectUrl) {
-                            resolve(redirectUrl);
-                        } else {
-                            reject(new Error('Auth flow cancelled'));
-                        }
-                    }
-                );
-            });
-
-            // Extract authorization code from redirect URL and surface OAuth errors clearly.
-            const code = this.extractAuthCode(responseUrl);
-
-            // Exchange authorization code for tokens
-            const tokenResponse = await this.exchangeCodeForToken(code, codeVerifier);
-
-            // Store token and expiry time
-            await this.storeToken(tokenResponse);
-
+            const tokenResponse = await this.authorize(true, 'select_account');
             console.log('OAuth login successful');
             return tokenResponse;
         } catch (error) {
@@ -107,19 +106,72 @@ class OAuth {
     }
 
     /**
+     * Attempt non-interactive OAuth using existing Microsoft session cookies.
+     * @returns {Promise<Object>} Token response
+     */
+    async silentLogin() {
+        return this.authorize(false, 'none');
+    }
+
+    /**
+     * Run OAuth authorization code + PKCE flow.
+     * @private
+     * @param {boolean} interactive - Whether auth flow can prompt the user
+     * @param {string} prompt - OAuth prompt value
+     * @returns {Promise<Object>} Token response
+     */
+    async authorize(interactive = true, prompt = 'select_account') {
+        // Generate PKCE pair — required for SPA client type in Entra ID.
+        const codeVerifier = this.generateCodeVerifier();
+        const codeChallenge = await this.generateCodeChallenge(codeVerifier);
+
+        const authUrl = this.buildAuthUrl(codeChallenge, prompt);
+        console.log(`Initiating OAuth ${interactive ? 'interactive' : 'silent'} flow...`);
+
+        const responseUrl = await new Promise((resolve, reject) => {
+            chrome.identity.launchWebAuthFlow(
+                {
+                    url: authUrl,
+                    interactive: interactive
+                },
+                (redirectUrl) => {
+                    if (chrome.runtime.lastError) {
+                        reject(new Error(chrome.runtime.lastError.message));
+                    } else if (redirectUrl) {
+                        resolve(redirectUrl);
+                    } else {
+                        reject(new Error('Auth flow cancelled'));
+                    }
+                }
+            );
+        });
+
+        // Extract authorization code from redirect URL and surface OAuth errors clearly.
+        const code = this.extractAuthCode(responseUrl);
+
+        // Exchange authorization code for tokens
+        const tokenResponse = await this.exchangeCodeForToken(code, codeVerifier);
+
+        // Store token and expiry time
+        await this.storeToken(tokenResponse);
+
+        return tokenResponse;
+    }
+
+    /**
      * Build the authorization URL
      * @private
      * @param {string} codeChallenge - PKCE code challenge
      * @returns {string} The authorization URL
      */
-    buildAuthUrl(codeChallenge) {
+    buildAuthUrl(codeChallenge, prompt = 'select_account') {
         const params = new URLSearchParams({
             client_id: this.clientId,
             redirect_uri: this.redirectUri,
             response_type: 'code',
             scope: this.scope,
             response_mode: 'query',
-            prompt: 'select_account',
+            prompt: prompt,
             code_challenge: codeChallenge,
             code_challenge_method: 'S256'
         });
@@ -240,12 +292,22 @@ class OAuth {
             if (this.isTokenExpired(stored.expiry)) {
                 console.log('Token expired, refreshing...');
                 if (stored.refresh_token) {
-                    // If you implement refresh token flow
-                    return await this.refreshToken(stored.refresh_token);
+                    try {
+                        return await this.refreshToken(stored.refresh_token);
+                    } catch (refreshError) {
+                        console.warn('Refresh token failed, attempting silent re-auth...', refreshError);
+                    }
                 } else {
-                    // Re-login if no refresh token
-                    const newToken = await this.login();
-                    return newToken.access_token;
+                    console.warn('No refresh token available, attempting silent re-auth...');
+                }
+
+                try {
+                    const silentToken = await this.silentLogin();
+                    return silentToken.access_token;
+                } catch (silentError) {
+                    console.error('Silent re-auth failed:', silentError);
+                    await this.logout();
+                    throw new Error(OAuth.getUserFacingAuthMessage(silentError));
                 }
             }
 
@@ -389,8 +451,6 @@ class OAuth {
             return newTokenResponse.access_token;
         } catch (error) {
             console.error('Token refresh error:', error);
-            // If refresh fails, clear token and ask user to login again
-            await this.logout();
             throw error;
         }
     }
