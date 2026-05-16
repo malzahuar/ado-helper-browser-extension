@@ -30,9 +30,14 @@ class OAuth {
         ].join(' ');
         this.tokenStorageKey = 'entraIdToken';
         this.expiryStorageKey = 'entraIdTokenExpiry';
-        // In-flight refresh promise — prevents parallel refresh calls from racing
-        // and invalidating each other when Entra rotates the refresh token.
+        // Same-tab in-flight refresh promise (deduplicates concurrent callers
+        // within a single content script).
         this._refreshInFlight = null;
+        // Cross-tab lock metadata: a storage key that any tab can claim before
+        // refreshing. Other tabs see the lock and wait for the new token to
+        // appear in storage instead of racing Entra's refresh-token rotation.
+        this.refreshLockKey = 'entraRefreshLock';
+        this.refreshLockTtlMs = 10000;
     }
 
     /**
@@ -354,28 +359,111 @@ class OAuth {
             }
 
             console.log('Token expired, refreshing...');
-            if (stored.refresh_token) {
+            const gotLock = await this._tryAcquireCrossTabLock();
+            if (!gotLock) {
                 try {
-                    return await this.refreshToken(stored.refresh_token);
-                } catch (refreshError) {
-                    console.warn('Refresh token failed, attempting silent re-auth...', refreshError);
+                    console.log('Another tab is refreshing; waiting for new token...');
+                    return await this._waitForRefreshedToken(stored.expiry);
+                } catch (waitError) {
+                    // Other tab may have crashed or its refresh failed.
+                    // Fall through and try our own refresh.
+                    console.warn('Cross-tab wait failed, attempting own refresh:', waitError);
                 }
-            } else {
-                console.warn('No refresh token available, attempting silent re-auth...');
             }
 
             try {
-                const silentToken = await this.silentLogin();
-                return silentToken.access_token;
-            } catch (silentError) {
-                console.error('Silent re-auth failed:', silentError);
-                await this.logout();
-                throw new Error(OAuth.getUserFacingAuthMessage(silentError));
+                if (stored.refresh_token) {
+                    try {
+                        return await this.refreshToken(stored.refresh_token);
+                    } catch (refreshError) {
+                        console.warn('Refresh token failed, attempting silent re-auth...', refreshError);
+                    }
+                } else {
+                    console.warn('No refresh token available, attempting silent re-auth...');
+                }
+
+                try {
+                    const silentToken = await this.silentLogin();
+                    return silentToken.access_token;
+                } catch (silentError) {
+                    console.error('Silent re-auth failed:', silentError);
+                    await this.logout();
+                    throw new Error(OAuth.getUserFacingAuthMessage(silentError));
+                }
+            } finally {
+                if (gotLock) {
+                    await this._releaseCrossTabLock();
+                }
             }
         } catch (error) {
             console.error('Error getting valid token:', error);
             throw error;
         }
+    }
+
+    /**
+     * Try to claim the cross-tab refresh lock. Returns true if this tab now
+     * owns the lock; false if another tab holds a fresh (non-expired) lock.
+     * @private
+     */
+    async _tryAcquireCrossTabLock() {
+        const now = Date.now();
+        const existing = await new Promise(resolve =>
+            chrome.storage.local.get(this.refreshLockKey, r => resolve(r[this.refreshLockKey])));
+        if (existing && (now - existing.startedAt) < this.refreshLockTtlMs) {
+            return false;
+        }
+        await new Promise(resolve =>
+            chrome.storage.local.set({ [this.refreshLockKey]: { startedAt: now } }, resolve));
+        return true;
+    }
+
+    /**
+     * Release the cross-tab refresh lock.
+     * @private
+     */
+    _releaseCrossTabLock() {
+        return new Promise(resolve =>
+            chrome.storage.local.remove(this.refreshLockKey, resolve));
+    }
+
+    /**
+     * Wait for another tab to write a refreshed token to storage. Resolves with
+     * the new access_token, or rejects on timeout (lock TTL + a small buffer).
+     * @private
+     * @param {number} staleExpiry - The expiry timestamp we already know is stale
+     */
+    _waitForRefreshedToken(staleExpiry) {
+        return new Promise((resolve, reject) => {
+            let settled = false;
+            const finish = (fn, arg) => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timeoutId);
+                chrome.storage.onChanged.removeListener(handler);
+                fn(arg);
+            };
+            const handler = (changes, area) => {
+                if (area !== 'local' || !changes[this.tokenStorageKey]) return;
+                const newToken = changes[this.tokenStorageKey].newValue;
+                if (newToken && newToken.expiry > staleExpiry) {
+                    finish(resolve, newToken.access_token);
+                }
+            };
+            const timeoutId = setTimeout(() => {
+                finish(reject, new Error('Timed out waiting for another tab to refresh the token'));
+            }, this.refreshLockTtlMs + 2000);
+            chrome.storage.onChanged.addListener(handler);
+
+            // Re-check synchronously in case the token landed between the
+            // expiry check and adding the listener.
+            chrome.storage.local.get(this.tokenStorageKey, (r) => {
+                const stored = r[this.tokenStorageKey];
+                if (stored && stored.expiry > staleExpiry) {
+                    finish(resolve, stored.access_token);
+                }
+            });
+        });
     }
 
     /**
