@@ -50,11 +50,10 @@ document.addEventListener('DOMContentLoaded', () => {
             const authMethod = result.authMethod || (localResult.adoPatToken ? 'pat' : 'oauth');
             document.getElementById('auth-' + authMethod).checked = true;
             updateAuthenticationUI();
-            
-            // Load PAT if exists
-            if (localResult.adoPatToken) {
-                document.getElementById('ado-pat-token').value = localResult.adoPatToken;
-            }
+
+            // Never echo the stored PAT into the DOM. Show a masked indicator
+            // instead; the input is only used when the user is entering a new value.
+            showPatStoredState(Boolean(localResult.adoPatToken), localResult.adoPatToken);
             
             // Initialize OAuth if client ID is set
             if (result.adoClientId) {
@@ -140,6 +139,35 @@ function initializeAuthenticationUI() {
     }
 }
 
+/**
+ * Toggle between "PAT already stored" indicator and the input field.
+ * @param {boolean} hasStored - whether a PAT exists in chrome.storage.local
+ * @param {string} [token] - the raw token, used only to derive the masked suffix
+ */
+function showPatStoredState(hasStored, token) {
+    const input = document.getElementById('ado-pat-token');
+    const storedRow = document.getElementById('ado-pat-stored');
+    const storedText = document.getElementById('ado-pat-stored-text');
+    const replaceBtn = document.getElementById('ado-pat-replace-btn');
+    if (!input || !storedRow || !storedText || !replaceBtn) return;
+
+    if (hasStored) {
+        const suffix = token ? token.slice(-4) : '••••';
+        storedText.textContent = `✓ PAT saved (••••${suffix})`;
+        storedRow.style.display = 'flex';
+        input.value = '';
+        input.style.display = 'none';
+        replaceBtn.onclick = () => {
+            storedRow.style.display = 'none';
+            input.style.display = 'block';
+            input.focus();
+        };
+    } else {
+        storedRow.style.display = 'none';
+        input.style.display = 'block';
+    }
+}
+
 // Update authentication UI based on selected method
 function updateAuthenticationUI() {
     const selectedMethod = document.querySelector('input[name="auth-method"]:checked').value;
@@ -187,8 +215,7 @@ async function handleOAuthLogin() {
         
     } catch (error) {
         console.error('OAuth login error:', error);
-        const friendlyMessage = OAuth.getUserFacingAuthMessage(error);
-        showToast('Sign in failed: ' + friendlyMessage, 'error');
+        showToast('Sign in failed: ' + error.message, 'error');
     } finally {
         const loginBtn = document.getElementById('oauth-login-btn');
         loginBtn.disabled = false;
@@ -495,7 +522,9 @@ function showToast(message, type = 'success') {
 function saveSettings() {
     const tableData = getTableData();
     const authMethod = document.querySelector('input[name="auth-method"]:checked').value;
-    const adoPatToken = document.getElementById('ado-pat-token').value;
+    const patInput = document.getElementById('ado-pat-token');
+    const adoPatToken = patInput.value;
+    const patInputVisible = patInput.style.display !== 'none';
     const adoClientId = document.getElementById('ado-client-id').value.trim();
 
     const settings = {
@@ -511,43 +540,37 @@ function saveSettings() {
     };
 
     console.log('Saving settings with auth method:', authMethod);
-    
-    // Save settings to sync storage
+
+    const finalize = () => {
+        if (adoClientId) {
+            oauth = new OAuth(adoClientId);
+            updateAuthenticationStatus();
+        }
+        // Clear the input so the secret never lingers in the DOM, and refresh
+        // the masked indicator from storage.
+        patInput.value = '';
+        chrome.storage.local.get(['adoPatToken'], (r) => {
+            showPatStoredState(Boolean(r.adoPatToken), r.adoPatToken);
+        });
+        showToast('Options saved!');
+    };
+
     chrome.storage.sync.set(settings, () => {
-        // Save PAT token to local storage if using PAT
-        if (authMethod === 'pat' && adoPatToken) {
+        if (authMethod === 'pat' && patInputVisible && adoPatToken) {
+            // User entered a new PAT — persist it.
             chrome.storage.local.set({ adoPatToken }, () => {
                 if (chrome.runtime.lastError) {
-                    console.error('Error saving PAT token:', chrome.runtime.lastError);
                     showToast('Error saving PAT token: ' + chrome.runtime.lastError.message, 'error');
-                } else {
-                    console.log('Settings saved successfully');
-                    // Re-initialize OAuth with new Client ID if it changed
-                    if (adoClientId) {
-                        oauth = new OAuth(adoClientId);
-                        updateAuthenticationStatus();
-                    }
-                    showToast('Options saved!');
+                    return;
                 }
+                finalize();
             });
+        } else if (authMethod === 'oauth') {
+            // Switched away from PAT — clear the stored secret.
+            chrome.storage.local.remove('adoPatToken', finalize);
         } else {
-            // If switched from PAT to OAuth, clear PAT token
-            if (authMethod === 'oauth') {
-                chrome.storage.local.remove('adoPatToken');
-            }
-            
-            if (chrome.runtime.lastError) {
-                console.error('Error saving:', chrome.runtime.lastError);
-                showToast('Error saving options: ' + chrome.runtime.lastError.message, 'error');
-            } else {
-                console.log('Settings saved successfully');
-                // Re-initialize OAuth with new Client ID if it changed
-                if (adoClientId) {
-                    oauth = new OAuth(adoClientId);
-                    updateAuthenticationStatus();
-                }
-                showToast('Options saved!');
-            }
+            // PAT mode but input was hidden (keeping existing stored value) — leave it alone.
+            finalize();
         }
     });
 }

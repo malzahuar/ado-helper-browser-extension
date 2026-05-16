@@ -542,7 +542,7 @@
                     </label>
                     <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 12px;">
                         <input type="text" id="redirect-uri" readonly placeholder="Loading extension ID..." style="width: 100%; max-width: 100%; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--background); color: var(--text-primary); font-size: 13px;">
-                        <button type="button" id="copy-redirect-uri-btn" style="padding: 10px 16px; background: var(--primary-color); color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 500; white-space: nowrap;" title="Copy redirect URI to clipboard">
+                        <button type="button" id="copy-redirect-uri-btn" style="white-space: nowrap;" title="Copy redirect URI to clipboard">
                             📋 Copy
                         </button>
                     </div>
@@ -556,7 +556,7 @@
                     </label>
                     <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 12px;">
                         <input type="text" id="ado-client-id" name="ado-client-id" placeholder="e.g., xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" style="width: 100%; max-width: 100%; padding: 10px 12px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--card-background); color: var(--text-primary); font-size: 13px;">
-                        <button type="button" id="load-default-client-id-btn" style="padding: 10px 16px; background: var(--primary-color); color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 500; white-space: nowrap;" title="Load default OAuth Client ID">
+                        <button type="button" id="load-default-client-id-btn" style="white-space: nowrap;" title="Load default OAuth Client ID">
                             ↻ Default
                         </button>
                     </div>
@@ -587,7 +587,11 @@
                         Personal Access Token:
                         <span class="help-icon" title="Generate a PAT with Read permissions for 'Work Item', 'Code' and 'Build' from Azure DevOps User Settings > Personal Access Tokens">ⓘ</span>
                     </label>
-                    <input type="password" id="ado-pat-token" name="ado-pat-token" placeholder="Enter your PAT token" style="width: 100%; max-width: 100%;">
+                    <div id="ado-pat-stored" style="display: none; align-items: center; margin-bottom: 8px;">
+                        <span id="ado-pat-stored-text" style="font-family: monospace; line-height: 1;"></span>
+                        <button type="button" id="ado-pat-replace-btn" style="margin-left: 8px;">Replace</button>
+                    </div>
+                    <input type="password" id="ado-pat-token" name="ado-pat-token" placeholder="Enter your PAT token" autocomplete="off" style="width: 100%; max-width: 100%;">
                 </div>
             </div>
             

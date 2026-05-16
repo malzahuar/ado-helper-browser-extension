@@ -94,15 +94,28 @@ class AzureDevOpsAPI {
      * @returns {boolean} True if this is likely an auth issue
      */
     isAuthError(error) {
-        const message = String(error?.message || error || '').toLowerCase();
-        return (
-            message.includes('token') ||
-            message.includes('oauth') ||
-            message.includes('sign in') ||
-            message.includes('session') ||
-            message.includes('login_required') ||
-            message.includes('interaction_required')
-        );
+        if (error instanceof AuthError) {
+            return true;
+        }
+        return OAuth.isEntraSessionExpiredError(error);
+    }
+
+    /**
+     * Throw an AuthError if a response indicates 401/403, otherwise return it.
+     * Use this immediately after any authenticated fetch so callers can route
+     * auth failures to the re-auth flow instead of swallowing them as "no data".
+     * @private
+     * @param {Response} response
+     * @returns {Response}
+     */
+    throwIfAuthFailed(response) {
+        if (response.status === 401 || response.status === 403) {
+            throw new AuthError(
+                `Azure DevOps rejected the request (HTTP ${response.status}). Please sign in again.`,
+                response.status
+            );
+        }
+        return response;
     }
 
     /**
@@ -129,6 +142,8 @@ class AzureDevOpsAPI {
                         'Content-Type': 'application/json'
                     }
                 });
+
+                this.throwIfAuthFailed(response);
 
                 if (response.ok) {
                     const data = await response.json();
@@ -202,17 +217,6 @@ class AzureDevOpsAPI {
             }
         }
         return prIds;
-    }
-
-    extractRepoId(url) {
-        // vstfs:///Git/Ref/{projectId}/{repoId}/{branchName}
-        try {
-            const parts = url.split('/');
-            if (parts.length >= 6) {
-                return parts[5];
-            }
-        } catch (e) {}
-        return null;
     }
 
     async calculateBranchStatus(workItemId, branches) {
@@ -354,6 +358,7 @@ class AzureDevOpsAPI {
                 }
             });
 
+            this.throwIfAuthFailed(response);
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
@@ -383,6 +388,7 @@ class AzureDevOpsAPI {
             return branches;
         } catch (error) {
             console.error('Error fetching work item branches:', error);
+            if (this.isAuthError(error)) throw error;
             return [];
         }
     }
@@ -478,7 +484,7 @@ class AzureDevOpsAPI {
                 : `refs/heads/${branchName}`;
 
             const url = `${this.baseUrl}/build/builds?branchName=${encodeURIComponent(fullBranchName)}&api-version=7.0`;
-            
+
             const authHeader = await this.getAuthHeader();
             const response = await fetch(url, {
                 headers: {
@@ -487,6 +493,7 @@ class AzureDevOpsAPI {
                 }
             });
 
+            this.throwIfAuthFailed(response);
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
@@ -495,6 +502,7 @@ class AzureDevOpsAPI {
             return data.value || [];
         } catch (error) {
             console.error('Error fetching branch builds:', error);
+            if (this.isAuthError(error)) throw error;
             return [];
         }
     }
@@ -505,9 +513,6 @@ class AzureDevOpsAPI {
      * @returns {Promise<Object|null>} Latest build or null
      */
     async getLatestBuild(branchName) {
-        if (branchName === '72090-onlinehelp-Service-Charge-feature-for-hotels'){
-            console.log('Debug: Fetching latest build for branch:', branchName);
-        }
         const builds = await this.getBranchBuilds(branchName);
         if (builds.length === 0) return null;
 
@@ -536,10 +541,12 @@ class AzureDevOpsAPI {
                     'Content-Type': 'application/json'
                 }
             });
+            this.throwIfAuthFailed(response);
             if (!response.ok) return null;
             return await response.json();
         } catch (error) {
             console.error('Error fetching PR details:', error);
+            if (this.isAuthError(error)) throw error;
             return null;
         }
     }
@@ -552,7 +559,7 @@ class AzureDevOpsAPI {
     async getWorkItemPullRequests(workItemId) {
         try {
             const url = `${this.baseUrl}/wit/workitems/${workItemId}?$expand=relations&api-version=7.0`;
-            
+
             const authHeader = await this.getAuthHeader();
             const response = await fetch(url, {
                 headers: {
@@ -561,6 +568,7 @@ class AzureDevOpsAPI {
                 }
             });
 
+            this.throwIfAuthFailed(response);
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
@@ -583,6 +591,7 @@ class AzureDevOpsAPI {
             return prs.filter(pr => pr !== null);
         } catch (error) {
             console.error('Error fetching work item PRs:', error);
+            if (this.isAuthError(error)) throw error;
             return [];
         }
     }
@@ -606,8 +615,9 @@ class AzureDevOpsAPI {
                 }
             });
 
+            this.throwIfAuthFailed(response);
             if (!response.ok) return null;
-            
+
             const data = await response.json();
             if (data.value && data.value.length > 0) {
                 return data.value[0];
@@ -615,204 +625,8 @@ class AzureDevOpsAPI {
             return null;
         } catch (error) {
             console.error('Error fetching PR build:', error);
+            if (this.isAuthError(error)) throw error;
             return null;
-        }
-    }
-
-    /**
-     * Get branch status summary for a work item
-     * @param {number} workItemId - The work item ID
-     * @returns {Promise<Object>} Build status summary
-     */
-    async getWorkItemBranchStatus(workItemId) {
-        try {
-            const branches = await this.getWorkItemBranches(workItemId);            
-            
-            if (branches.length === 0) {
-                return {
-                    workItemId,
-                    hasBuilds: false,
-                    branches: [],
-                    overallStatus: 'none'
-                };
-            }
-
-            const branchStatuses = [];
-            let hasAnyFailed = false;
-            let hasAnyPartiallySucceeded = false;
-            let hasAnyCanceled = false;
-            let hasAnyInProgress = false;
-            let hasAnySucceeded = false;
-
-            // Get latest build for each branch
-            for (const branch of branches) {
-                let status = 'none';
-                
-                const latestBuild = await this.getLatestBuild(branch.name);
-                
-                if (latestBuild) {
-                    status = this.normalizeBuildStatus(latestBuild.status, latestBuild.result);
-                } else if (branch.repoId) {
-                    const commitId = await this.getLatestCommit(branch.repoId, branch.name);
-                    if (commitId) {
-                        const statuses = await this.getCommitStatuses(branch.repoId, commitId);
-                        if (statuses && statuses.length > 0) {
-                            // Get first commit status(last added)
-                            status = this.convertCommitStatus(statuses[0].state);
-                        }
-                    }
-                }
-                
-                if (status !== 'none') {
-                    branchStatuses.push({
-                        branchName: branch.name,
-                        status: status,
-                    });
-
-                    // Track overall status
-                    if (status === 'failed') hasAnyFailed = true;
-                    if (status === 'partiallySucceeded') hasAnyPartiallySucceeded = true;
-                    if (status === 'canceled') hasAnyCanceled = true;
-                    if (status === 'inProgress') hasAnyInProgress = true;
-                    if (status === 'succeeded') hasAnySucceeded = true;
-                }
-            }
-
-            // Determine overall status (priority: failed > inProgress > succeeded > none)
-            let overallStatus = 'none';
-            if (hasAnyFailed) {
-                overallStatus = 'failed';
-            } else if (hasAnyPartiallySucceeded) {
-                overallStatus = 'partiallySucceeded';
-            } else if (hasAnyCanceled) {
-                overallStatus = 'canceled';
-            } else if (hasAnyInProgress) {
-                overallStatus = 'inProgress';
-            } else if (hasAnySucceeded) {
-                overallStatus = 'succeeded';
-            }
-
-            return {
-                workItemId,
-                hasBuilds: branchStatuses.length > 0,
-                branches: branchStatuses,
-                overallStatus,
-                totalBranches: branches.length,
-                branchesWithBuilds: branchStatuses.length
-            };
-        } catch (error) {
-            console.error('Error getting work item build status:', error);
-            return {
-                workItemId,
-                hasBuilds: false,
-                branches: [],
-                overallStatus: 'error',
-                error: error.message
-            };
-        }
-    }
-    /**
-     * Get pr status summary for a work item
-     * @param {number} workItemId - The work item ID
-     * @returns {Promise<Object>} Build status summary
-     */
-    async getWorkItemPRStatus(workItemId) {
-        try {
-            const pullRequests = await this.getWorkItemPullRequests(workItemId);            
-            
-            if (pullRequests.length === 0) {
-                return {
-                    workItemId,
-                    hasBuilds: false,
-                    branches: [],
-                    overallStatus: 'none'
-                };
-            }
-
-            const prStatuses = [];
-            let hasAnyFailed = false;
-            let hasAnyInProgress = false;
-            let hasAnySucceeded = false;
-            let hasAnyCompleted = false;
-            
-            // Get latest build for each pull request
-            for (const pr of pullRequests) {
-                // TODO: Fix this, currently always returns null
-                // First, check pr.status
-                // if it's completed, then check pr.mergeStatus
-                // if it's not completed, then check which status to return
-                // if it's not completed, can be: active, abandoned, conflicted?
-                // if it's in progress, then return inProgress
-                // if it's abandoned, it's okay, so return succeeded?
-                // if it's conflicted or has mergeconflicts, return failed
-                // Basically,in this part, we need to check the actives PR's are merged correctly or built correctly
-                if ((pr.isDraft) || (pr.status === 'abandoned')) continue;
-                if ((pr.status === 'completed') && (pr.mergeStatus === 'succeeded')) {
-                    hasAnyCompleted = true;                    
-                }
-                if (pr.status === 'active') {
-                    if (pr.mergeStatus === 'conflicts') hasAnyFailed = true;
-                    if (pr.mergeStatus === 'inProgress') hasAnyInProgress = true;
-                    if (pr.mergeStatus === 'succeeded') hasAnySucceeded = true;                    
-                }
-
-                const status = pr.status;
-                prStatuses.push({
-                    branchName: `PR-${pr.pullRequestId}`,
-                    status: status,
-                });  
-
-
-                // const prLatestBuild = await this.getPullRequestLatestBuild(pr.pullRequestId);
-
-                // if (prLatestBuild) {
-                //     const status = this.normalizeBuildStatus(prLatestBuild.status, prLatestBuild.result);
-                //     prStatuses.push({
-                //         branchName: `PR-${pr.pullRequestId}`,
-                //         buildId: prLatestBuild.id,
-                //         status: status,
-                //         result: prLatestBuild.result,
-                //         buildNumber: prLatestBuild.buildNumber,
-                //         startTime: prLatestBuild.startTime,
-                //         finishTime: prLatestBuild.finishTime,
-                //         url: prLatestBuild._links?.web?.href
-                //     });     
-                //     // Track overall status
-                //     if (status === 'failed') hasAnyFailed = true;
-                //     if (status === 'inProgress') hasAnyInProgress = true;
-                //     if (status === 'succeeded') hasAnySucceeded = true;
-                // }
-            }
-
-            // Determine overall status (priority: failed > inProgress > succeeded > none)
-            let overallStatus = 'none';
-            if (hasAnyFailed) {
-                overallStatus = 'failed';
-            } else if (hasAnyInProgress) {
-                overallStatus = 'inProgress';
-            } else if (hasAnySucceeded) {
-                overallStatus = 'buildSucceeded';
-            } else if(hasAnyCompleted){
-                overallStatus = 'completed';
-            }
-
-            return {
-                workItemId,
-                hasBuilds: prStatuses.length > 0,
-                branches: prStatuses,
-                overallStatus,
-                totalBranches: pullRequests.length,
-                branchesWithBuilds: prStatuses.length
-            };
-        } catch (error) {
-            console.error('Error getting work item build status:', error);
-            return {
-                workItemId,
-                hasBuilds: false,
-                branches: [],
-                overallStatus: 'error',
-                error: error.message
-            };
         }
     }
 
@@ -962,6 +776,7 @@ class AzureDevOpsAPI {
                 }
             });
 
+            this.throwIfAuthFailed(response);
             if (!response.ok) return null;
             const data = await response.json();
             if (data.value && data.value.length > 0) {
@@ -970,6 +785,7 @@ class AzureDevOpsAPI {
             return null;
         } catch (error) {
             console.error('Error fetching latest commit:', error);
+            if (this.isAuthError(error)) throw error;
             return null;
         }
     }
@@ -991,11 +807,13 @@ class AzureDevOpsAPI {
                 }
             });
 
+            this.throwIfAuthFailed(response);
             if (!response.ok) return [];
             const data = await response.json();
             return data.value || [];
         } catch (error) {
             console.error('Error fetching commit statuses:', error);
+            if (this.isAuthError(error)) throw error;
             return [];
         }
     }

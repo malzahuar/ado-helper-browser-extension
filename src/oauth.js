@@ -3,6 +3,18 @@
  * Handles OAuth flow with Azure DevOps using chrome.identity API
  */
 
+/**
+ * Thrown when an API call fails because of authentication/authorization.
+ * Carries the HTTP status so callers can distinguish 401 from 403.
+ */
+class AuthError extends Error {
+    constructor(message, status) {
+        super(message);
+        this.name = 'AuthError';
+        this.status = status;
+    }
+}
+
 class OAuth {
     constructor(clientId) {
         this.clientId = (clientId || '').trim();
@@ -18,6 +30,9 @@ class OAuth {
         ].join(' ');
         this.tokenStorageKey = 'entraIdToken';
         this.expiryStorageKey = 'entraIdTokenExpiry';
+        // In-flight refresh promise — prevents parallel refresh calls from racing
+        // and invalidating each other when Entra rotates the refresh token.
+        this._refreshInFlight = null;
     }
 
     /**
@@ -26,6 +41,9 @@ class OAuth {
      * @returns {boolean} True when silent auth failed due to missing session/cookies
      */
     static isEntraSessionExpiredError(error) {
+        if (error instanceof AuthError) {
+            return true;
+        }
         const message = String(error?.message || error || '').toLowerCase();
         return (
             message.includes('login_required') ||
@@ -68,6 +86,22 @@ class OAuth {
      */
     generateCodeVerifier() {
         const array = new Uint8Array(32);
+        crypto.getRandomValues(array);
+        return btoa(String.fromCharCode(...array))
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=/g, '');
+    }
+
+    /**
+     * Generate a random URL-safe `state` value to bind authorize → callback.
+     * RFC 6749 §10.12. PKCE alone already prevents code injection here, but a
+     * `state` value also guards against stray callbacks from prior aborted flows.
+     * @private
+     * @returns {string}
+     */
+    generateState() {
+        const array = new Uint8Array(16);
         crypto.getRandomValues(array);
         return btoa(String.fromCharCode(...array))
             .replace(/\+/g, '-')
@@ -124,8 +158,9 @@ class OAuth {
         // Generate PKCE pair — required for SPA client type in Entra ID.
         const codeVerifier = this.generateCodeVerifier();
         const codeChallenge = await this.generateCodeChallenge(codeVerifier);
+        const state = this.generateState();
 
-        const authUrl = this.buildAuthUrl(codeChallenge, prompt);
+        const authUrl = this.buildAuthUrl(codeChallenge, prompt, state);
         console.log(`Initiating OAuth ${interactive ? 'interactive' : 'silent'} flow...`);
 
         const responseUrl = await new Promise((resolve, reject) => {
@@ -146,8 +181,8 @@ class OAuth {
             );
         });
 
-        // Extract authorization code from redirect URL and surface OAuth errors clearly.
-        const code = this.extractAuthCode(responseUrl);
+        // Extract authorization code and verify state matches the one we sent.
+        const code = this.extractAuthCode(responseUrl, state);
 
         // Exchange authorization code for tokens
         const tokenResponse = await this.exchangeCodeForToken(code, codeVerifier);
@@ -164,7 +199,7 @@ class OAuth {
      * @param {string} codeChallenge - PKCE code challenge
      * @returns {string} The authorization URL
      */
-    buildAuthUrl(codeChallenge, prompt = 'select_account') {
+    buildAuthUrl(codeChallenge, prompt = 'select_account', state) {
         const params = new URLSearchParams({
             client_id: this.clientId,
             redirect_uri: this.redirectUri,
@@ -175,6 +210,9 @@ class OAuth {
             code_challenge: codeChallenge,
             code_challenge_method: 'S256'
         });
+        if (state) {
+            params.set('state', state);
+        }
 
         return `${this.authority}/authorize?${params.toString()}`;
     }
@@ -185,7 +223,7 @@ class OAuth {
      * @param {string} redirectUrl - The redirect URL containing the code
      * @returns {string|null} The authorization code or null if not found
      */
-    extractAuthCode(redirectUrl) {
+    extractAuthCode(redirectUrl, expectedState) {
         const payload = this.parseOAuthResponse(redirectUrl);
 
         if (payload.error) {
@@ -198,6 +236,10 @@ class OAuth {
                 'Failed to extract authorization code from response. Verify your app registration redirect URI matches exactly: ' +
                 this.redirectUri
             );
+        }
+
+        if (expectedState && payload.state !== expectedState) {
+            throw new Error('OAuth state mismatch — possible CSRF or stale callback. Please try signing in again.');
         }
 
         return payload.code;
@@ -215,7 +257,8 @@ class OAuth {
         const extract = (params) => ({
             code: params.get('code'),
             error: params.get('error'),
-            error_description: params.get('error_description')
+            error_description: params.get('error_description'),
+            state: params.get('state')
         });
 
         // Prefer explicit query payload when response_mode=query is honored.
@@ -236,7 +279,8 @@ class OAuth {
         return {
             code: null,
             error: null,
-            error_description: null
+            error_description: null,
+            state: null
         };
     }
 
@@ -277,41 +321,57 @@ class OAuth {
     }
 
     /**
-     * Get valid access token (refreshes if expired)
+     * Get valid access token (refreshes if expired).
+     * Concurrent callers share a single in-flight refresh to avoid Entra
+     * refresh-token rotation invalidating parallel requests.
      * @returns {Promise<string>} Valid access token
      */
     async getValidToken() {
+        if (this._refreshInFlight) {
+            return this._refreshInFlight;
+        }
+
+        this._refreshInFlight = this._getValidTokenInternal()
+            .finally(() => { this._refreshInFlight = null; });
+
+        return this._refreshInFlight;
+    }
+
+    /**
+     * Internal token resolution — do not call directly; use getValidToken.
+     * @private
+     */
+    async _getValidTokenInternal() {
         try {
             const stored = await this.getStoredToken();
-            
+
             if (!stored) {
-                throw new Error('No token found. Please login first.');
+                throw new AuthError('No token found. Please sign in with Microsoft.', 401);
             }
 
-            // Check if token is expired or about to expire (5 minute buffer)
-            if (this.isTokenExpired(stored.expiry)) {
-                console.log('Token expired, refreshing...');
-                if (stored.refresh_token) {
-                    try {
-                        return await this.refreshToken(stored.refresh_token);
-                    } catch (refreshError) {
-                        console.warn('Refresh token failed, attempting silent re-auth...', refreshError);
-                    }
-                } else {
-                    console.warn('No refresh token available, attempting silent re-auth...');
-                }
+            if (!this.isTokenExpired(stored.expiry)) {
+                return stored.access_token;
+            }
 
+            console.log('Token expired, refreshing...');
+            if (stored.refresh_token) {
                 try {
-                    const silentToken = await this.silentLogin();
-                    return silentToken.access_token;
-                } catch (silentError) {
-                    console.error('Silent re-auth failed:', silentError);
-                    await this.logout();
-                    throw new Error(OAuth.getUserFacingAuthMessage(silentError));
+                    return await this.refreshToken(stored.refresh_token);
+                } catch (refreshError) {
+                    console.warn('Refresh token failed, attempting silent re-auth...', refreshError);
                 }
+            } else {
+                console.warn('No refresh token available, attempting silent re-auth...');
             }
 
-            return stored.access_token;
+            try {
+                const silentToken = await this.silentLogin();
+                return silentToken.access_token;
+            } catch (silentError) {
+                console.error('Silent re-auth failed:', silentError);
+                await this.logout();
+                throw new Error(OAuth.getUserFacingAuthMessage(silentError));
+            }
         } catch (error) {
             console.error('Error getting valid token:', error);
             throw error;

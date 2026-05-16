@@ -113,17 +113,62 @@ function showNotification(message, type = 'info') {
         return;
     }
     newBranchDialog.appendChild(toast);
-    
+
     setTimeout(() => {
         toast.style.opacity = '1';
     }, 100);
-    
+
     setTimeout(() => {
         toast.style.opacity = '0';
         setTimeout(() => {
             newBranchDialog.removeChild(toast);
         }, 300);
     }, 3000);
+}
+
+/**
+ * Page-level toast that does NOT depend on the new-branch dialog being open.
+ * Attaches to document.body so it works on the board view, work-item view, etc.
+ * Uses position: fixed so it's visible regardless of scroll position.
+ */
+function showGlobalNotification(message, type = 'info') {
+    const toast = document.createElement('div');
+    toast.style.position = 'fixed';
+    toast.style.top = '20px';
+    toast.style.left = '50%';
+    toast.style.transform = 'translateX(-50%)';
+    toast.style.padding = '12px 16px';
+    toast.style.borderRadius = '4px';
+    toast.style.boxShadow = '0 4px 6px rgba(0, 0, 0, 0.15)';
+    toast.style.zIndex = '2147483647';
+    toast.style.fontSize = '14px';
+    toast.style.maxWidth = '420px';
+    toast.style.textAlign = 'center';
+    toast.style.opacity = '0';
+    toast.style.transition = 'opacity 0.6s ease-in-out';
+    toast.textContent = message;
+
+    if (type === 'error') {
+        toast.style.color = '#b05765';
+        toast.style.backgroundColor = '#fdf2f2';
+        toast.style.border = '1px solid #f5c2c7';
+    } else {
+        toast.style.color = '#ffffff';
+        toast.style.backgroundColor = '#5e87e4';
+    }
+
+    document.body.appendChild(toast);
+
+    requestAnimationFrame(() => { toast.style.opacity = '1'; });
+
+    setTimeout(() => {
+        toast.style.opacity = '0';
+        setTimeout(() => {
+            if (toast.parentNode) {
+                toast.parentNode.removeChild(toast);
+            }
+        }, 600);
+    }, 8000);
 }
 
 function showAuthNotification(error) {
@@ -135,7 +180,7 @@ function showAuthNotification(error) {
 
     authNotificationShownAt = now;
     const friendlyMessage = OAuth.getUserFacingAuthMessage(error);
-    showNotification(`ADO Helper: ${friendlyMessage}`, 'error');
+    showGlobalNotification(`ADO Helper: ${friendlyMessage}`, 'error');
 }
 
 /**
@@ -601,13 +646,19 @@ async function initializeBoardBuildStatus() {
                         }
                     } catch (error) {
                         console.error('Error fetching batch statuses:', error);
+                        if (OAuth.isEntraSessionExpiredError(error)) {
+                            throw error;
+                        }
                     }
                 }
-    
+
                 // Watch for new cards being added (when columns are expanded/collapsed or cards moved)
                 observeBoardChanges(api);
             } catch (error) {
                 console.error('Error initializing API:', error);
+                if (OAuth.isEntraSessionExpiredError(error)) {
+                    clearApiCache();
+                }
                 showAuthNotification(error);
             }
 
@@ -660,6 +711,9 @@ function observeBoardChanges(api) {
             }
         } catch (error) {
             console.error('Error processing new nodes:', error);
+            if (OAuth.isEntraSessionExpiredError(error)) {
+                clearApiCache();
+            }
             showAuthNotification(error);
         }
     };
