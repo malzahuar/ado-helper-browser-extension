@@ -30,10 +30,15 @@ If an admin needs a **different** Client ID and Redirect URI, they can override 
    - **Supported account types**: 
      - **Multi-Tenant** (recommended for wider use): Select **"Accounts in any organizational directory (Any Azure AD directory - Multitenant) and personal Microsoft accounts (e.g. Skype, Xbox)"** - allows companies AND individual users with one app
      - **Single-Tenant** (internal use only): Select **"Accounts in this organizational directory only"** - allows only your company employees
-   - **Redirect URI**: Web
+   - **Redirect URI**: Public client/native (mobile & desktop)
    - **Redirect URI value**: `https://<extension-id>.chromiumapp.org/`. Copy the value from Options page.
 
 5. Click **Register**
+
+ℹ️ **Why "Public client/native (mobile & desktop)" and not "Web" or "Single-page application"?**
+- **Web** marks the app as a confidential client, which requires a client secret. A browser extension ships its code to every user's machine, so a secret baked into it isn't secret — the extension never sends one, so Entra would reject the token exchange.
+- **Single-page application (SPA)** doesn't need a secret, but Microsoft caps its refresh tokens at 24 hours, forcing everyone to sign in again daily.
+- **Public client/native** matches how the extension actually authenticates (PKCE, no secret) and gets the standard ~90-day refresh token, so users stay signed in.
 
 ## Step 2: Configure API Permissions
 
@@ -100,7 +105,7 @@ Share the Client ID from Step 3 with users:
 - [ ] Selected account type:
   - [ ] Multi-Tenant: "Accounts in any organizational directory + personal Microsoft accounts"
   - [ ] Single-Tenant: "Accounts in this organizational directory only"
-- [ ] Added redirect URI: `https://<extension-id>.chromiumapp.org/`
+- [ ] Added redirect URI as **Public client/native (mobile & desktop)**: `https://<extension-id>.chromiumapp.org/`
 - [ ] Configured Azure DevOps API permissions
 - [ ] Verified Microsoft Graph delegated `User.Read` is present
 - [ ] Granted admin consent in your tenant

@@ -11,7 +11,8 @@
     "identity"
   ],
   "host_permissions": [
-    "https://dev.azure.com/*"
+    "https://dev.azure.com/*",
+    "https://login.microsoftonline.com/*"
   ],
   "background": {
     "service_worker": "src/background.js"

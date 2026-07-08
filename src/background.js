@@ -1,3 +1,56 @@
+importScripts('oauth.js');
+
+// One OAuth instance per Client ID, reused across messages. State is cheap
+// (clientId/scope/redirectUri) — the actual token always lives in
+// chrome.storage.local, so losing this map on service worker restart is safe.
+const oauthInstancesByClientId = new Map();
+
+function getOAuthInstance(clientId) {
+    if (!oauthInstancesByClientId.has(clientId)) {
+        oauthInstancesByClientId.set(clientId, new OAuth(clientId));
+    }
+    return oauthInstancesByClientId.get(clientId);
+}
+
+const AUTH_MESSAGE_TYPES = new Set([
+    'ADO_HELPER_AUTH_GET_TOKEN',
+    'ADO_HELPER_AUTH_LOGIN',
+    'ADO_HELPER_AUTH_LOGOUT',
+    'ADO_HELPER_AUTH_IS_AUTHENTICATED'
+]);
+
+// Runs all Entra ID token acquisition, storage, and refresh here in the
+// background service worker. Content scripts (which share a world with
+// whatever page they're injected into) only ever get a short-lived access
+// token over sendMessage — the refresh token never leaves this context.
+async function handleAuthMessage(message) {
+    try {
+        const oauth = getOAuthInstance(message.clientId);
+        switch (message.type) {
+            case 'ADO_HELPER_AUTH_GET_TOKEN':
+                return { token: await oauth.getValidToken() };
+            case 'ADO_HELPER_AUTH_LOGIN':
+                await oauth.login();
+                return { success: true };
+            case 'ADO_HELPER_AUTH_LOGOUT':
+                await oauth.logout();
+                return { success: true };
+            case 'ADO_HELPER_AUTH_IS_AUTHENTICATED':
+                return { isAuthenticated: await oauth.isAuthenticated() };
+        }
+    } catch (error) {
+        return { error: error.message || String(error) };
+    }
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (!message || !AUTH_MESSAGE_TYPES.has(message.type)) {
+        return false;
+    }
+    handleAuthMessage(message).then(sendResponse);
+    return true;
+});
+
 // Listen for extension installation
 chrome.runtime.onInstalled.addListener((details) => {
     if (details.reason === 'install') {

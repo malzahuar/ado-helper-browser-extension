@@ -1,5 +1,22 @@
-// Global OAuth instance
-let oauth = null;
+// Sends an Entra ID auth request to the background service worker, which is
+// the only place in the extension that ever holds a live token.
+function sendAuthMessage(type, clientId) {
+    return new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage({ type, clientId }, (response) => {
+            if (chrome.runtime.lastError) {
+                reject(new Error(chrome.runtime.lastError.message));
+            } else if (response?.error) {
+                reject(new Error(response.error));
+            } else {
+                resolve(response);
+            }
+        });
+    });
+}
+
+function getCurrentClientId() {
+    return document.getElementById('ado-client-id').value.trim();
+}
 
 // Load saved options when the page loads
 document.addEventListener('DOMContentLoaded', () => {
@@ -55,9 +72,8 @@ document.addEventListener('DOMContentLoaded', () => {
             // instead; the input is only used when the user is entering a new value.
             showPatStoredState(Boolean(localResult.adoPatToken), localResult.adoPatToken);
             
-            // Initialize OAuth if client ID is set
+            // Refresh authentication status display if client ID is set
             if (result.adoClientId) {
-                oauth = new OAuth(result.adoClientId);
                 updateAuthenticationStatus();
             }
             
@@ -186,7 +202,7 @@ function updateAuthenticationUI() {
 // Handle OAuth login
 async function handleOAuthLogin() {
     try {
-        const currentClientId = document.getElementById('ado-client-id').value.trim();
+        const currentClientId = getCurrentClientId();
         if (!currentClientId) {
             showToast('OAuth not configured. Please add your Client ID in settings.', 'error');
             return;
@@ -199,20 +215,17 @@ async function handleOAuthLogin() {
             return;
         }
 
-        // Always rebuild from the current input so Sign-In never uses stale in-memory config.
-        oauth = new OAuth(currentClientId);
-        
         const loginBtn = document.getElementById('oauth-login-btn');
         loginBtn.disabled = true;
         loginBtn.textContent = 'Signing in...';
-        
-        const tokenResponse = await oauth.login();
+
+        await sendAuthMessage('ADO_HELPER_AUTH_LOGIN', currentClientId);
         console.log('OAuth login successful');
-        
+
         // Update UI
-        updateAuthenticationStatus();
+        await updateAuthenticationStatus();
         showToast('Successfully signed in!');
-        
+
     } catch (error) {
         console.error('OAuth login error:', error);
         showToast('Sign in failed: ' + error.message, 'error');
@@ -226,19 +239,20 @@ async function handleOAuthLogin() {
 // Handle OAuth logout
 async function handleOAuthLogout() {
     try {
-        if (!oauth) return;
-        
+        const currentClientId = getCurrentClientId();
+        if (!currentClientId) return;
+
         const logoutBtn = document.getElementById('oauth-logout-btn');
         logoutBtn.disabled = true;
         logoutBtn.textContent = 'Signing out...';
-        
-        await oauth.logout();
+
+        await sendAuthMessage('ADO_HELPER_AUTH_LOGOUT', currentClientId);
         console.log('OAuth logout successful');
-        
+
         // Update UI
-        updateAuthenticationStatus();
+        await updateAuthenticationStatus();
         showToast('Successfully signed out!');
-        
+
     } catch (error) {
         console.error('OAuth logout error:', error);
         showToast('Sign out failed: ' + error.message, 'error');
@@ -251,9 +265,17 @@ async function handleOAuthLogout() {
 
 // Update authentication status display
 async function updateAuthenticationStatus() {
-    if (!oauth) return;
-    
-    const isAuthenticated = await oauth.isAuthenticated();
+    const currentClientId = getCurrentClientId();
+    if (!currentClientId) return;
+
+    let isAuthenticated = false;
+    try {
+        const response = await sendAuthMessage('ADO_HELPER_AUTH_IS_AUTHENTICATED', currentClientId);
+        isAuthenticated = Boolean(response?.isAuthenticated);
+    } catch (error) {
+        console.error('Error checking authentication status:', error);
+    }
+
     const authStatus = document.getElementById('auth-status');
     const authStatusText = document.getElementById('auth-status-text');
     const loginBtn = document.getElementById('oauth-login-btn');
@@ -543,7 +565,6 @@ function saveSettings() {
 
     const finalize = () => {
         if (adoClientId) {
-            oauth = new OAuth(adoClientId);
             updateAuthenticationStatus();
         }
         // Clear the input so the secret never lingers in the DOM, and refresh

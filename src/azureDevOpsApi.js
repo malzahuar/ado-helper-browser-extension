@@ -3,6 +3,35 @@
  * Handles API calls to retrieve build status for work items
  */
 
+/**
+ * Stands in for a live OAuth instance inside the content script. Delegates
+ * every token request to the background service worker instead, so the
+ * access/refresh token never has to be read into a context that shares a
+ * world with the Azure DevOps page itself.
+ */
+class RemoteOAuthToken {
+    constructor(clientId) {
+        this.clientId = clientId;
+    }
+
+    getValidToken() {
+        return new Promise((resolve, reject) => {
+            chrome.runtime.sendMessage(
+                { type: 'ADO_HELPER_AUTH_GET_TOKEN', clientId: this.clientId },
+                (response) => {
+                    if (chrome.runtime.lastError) {
+                        reject(new Error(chrome.runtime.lastError.message));
+                    } else if (response?.error) {
+                        reject(new Error(response.error));
+                    } else {
+                        resolve(response.token);
+                    }
+                }
+            );
+        });
+    }
+}
+
 class AzureDevOpsAPI {
     constructor(organization, project, authToken, isOAuth = false) {
         this.organization = organization;
@@ -57,7 +86,7 @@ class AzureDevOpsAPI {
                 } else if (authMethod === 'oauth' && clientId) {
                     // Use OAuth authentication
                     console.log(('Using OAuth authentication'));
-                    const oauth = new OAuth(clientId);
+                    const oauth = new RemoteOAuthToken(clientId);
                     AzureDevOpsAPI.createWithOAuth(organization, project, oauth)
                         .then(instance => resolve(instance))
                         .catch(err => reject(err));
