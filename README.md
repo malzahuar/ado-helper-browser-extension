@@ -59,10 +59,12 @@ To enable the Build and PR status features, you must configure your Azure DevOps
 **For Company Employees:**  
 If this is the first sign-in from your company, your IT admin will see an approval prompt. Once approved, all employees get instant access.
 
-**For Individual Users:**  
-Sign in with your personal Microsoft account - instant access, no approval needed.
+**For Individual Users (work/school):**  
+If your work or school (Entra ID) account is a member of the Azure DevOps organization, sign in directly - no admin approval is needed for self-service consent.
 
-**Consent Note:** OAuth delegated sign-in may also show a baseline "Sign in and read user profile" permission. This is required to authenticate the user and does not increase Azure DevOps API access beyond `Code (Read)`, `Build (Read)`, and `Work Items (Read)`.
+⚠️ **Important account limitation:** "Sign in with Microsoft" only supports **work or school accounts**. Personal Microsoft accounts (Outlook, Hotmail, Gmail-linked, etc.) are rejected by Microsoft Entra ID with "You can't sign in with a personal account. Use your work or school account instead", because the Azure DevOps token used by this extension is only available to organizational accounts. If you only have a personal Microsoft account, use **Option C (Browser Session)** below (recommended) or **Option B (Personal Access Token)**.
+
+**Consent Note:** OAuth delegated sign-in shows the Azure DevOps permissions requested by the extension (`Code (Read)`, `Build (Read)`, `Work Items (Read)`). These do not grant any access beyond reading the boards, builds, and PRs shown by the extension.
 
 **Note:** If your admin provided a custom OAuth app, clear the Client ID field and enter theirs instead. For detailed OAuth setup instructions, see [ENTRA ID Setup Guide](ENTRA_ID_ADMIN_SETUP.md).
 
@@ -70,6 +72,16 @@ Sign in with your personal Microsoft account - instant access, no approval neede
 1. Select **"Personal Access Token"** as the authentication method.
 2. Enter your **Personal Access Token** (requires `Build (Read)`, `Code (Read)`, and `Work Items (Read)` scopes).
 3. Click **Save**.
+
+#### Option C: Browser Session (Recommended for Personal Accounts)
+1. Select **"Browser session"** as the authentication method.
+2. Click **Save**.
+
+**How it works:** The extension calls the Azure DevOps REST API using the sign-in session you already have in this browser - no separate login, Client ID, or token is required. It works with **personal Microsoft accounts** and work/school accounts alike.
+
+**Requirements:**
+- You must be **signed in to `dev.azure.com`** in this browser with an account that is a member of the Azure DevOps organization and project you configured in the Basic Settings.
+- If the status icons do not appear, make sure you are signed in to `dev.azure.com`, then switch back to **Option A** (work/school accounts) or **Option B** (PAT) if needed.
 
 ## 📖 Usage
 
@@ -101,6 +113,9 @@ Tokens are short-lived and stored securely in your browser. They are never sent 
 
 **Personal Access Token (PAT):**  
 Your PAT is stored locally in your browser using the `chrome.storage.sync` API. It is never sent to any third-party server; it is only used to communicate directly with the Azure DevOps REST API.
+
+**Browser Session:**  
+No credentials are stored by the extension. API calls use the session cookies of your existing `dev.azure.com` sign-in and never leave the browser; nothing is sent to any third-party server.
 
 ## 📜 Version History
 

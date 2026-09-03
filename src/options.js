@@ -189,13 +189,12 @@ function updateAuthenticationUI() {
     const selectedMethod = document.querySelector('input[name="auth-method"]:checked').value;
     const oauthSection = document.getElementById('oauth-section');
     const patSection = document.getElementById('pat-section');
+    const sessionSection = document.getElementById('session-section');
     
-    if (selectedMethod === 'oauth') {
-        oauthSection.style.display = 'block';
-        patSection.style.display = 'none';
-    } else {
-        oauthSection.style.display = 'none';
-        patSection.style.display = 'block';
+    oauthSection.style.display = selectedMethod === 'oauth' ? 'block' : 'none';
+    patSection.style.display = selectedMethod === 'pat' ? 'block' : 'none';
+    if (sessionSection) {
+        sessionSection.style.display = selectedMethod === 'session' ? 'block' : 'none';
     }
 }
 
@@ -590,7 +589,9 @@ function saveSettings() {
             // Switched away from PAT — clear the stored secret.
             chrome.storage.local.remove('adoPatToken', finalize);
         } else {
-            // PAT mode but input was hidden (keeping existing stored value) — leave it alone.
+            // PAT mode with hidden input, or session mode: the stored PAT (if
+            // any) is left untouched so switching back is easy. The session
+            // mode does not use a token at all.
             finalize();
         }
     });

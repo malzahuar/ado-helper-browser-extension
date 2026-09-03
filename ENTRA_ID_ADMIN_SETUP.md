@@ -1,8 +1,10 @@
 # Microsoft Entra ID App Registration Setup Guide
 
-Setup OAuth 2.0 for the ADO Helper extension to support company employees (admin consent flow), individual users (direct sign-in), and multiple organizations with a single app registration.
+Setup OAuth 2.0 for the ADO Helper extension to support company employees (admin consent flow), individual users with work or school accounts (direct sign-in), and multiple organizations with a single app registration.
 
-**Flow:** First employee from a company → admin sees approval prompt → approves once → all other employees get instant access. Individual users sign in directly with personal Microsoft accounts.
+**Flow:** First employee from a company → admin sees approval prompt → approves once → all other employees get instant access. Individual users whose work/school (Entra ID) account is a member of the Azure DevOps organization can sign in directly.
+
+⚠️ **Account type limitation:** This OAuth flow authenticates against Microsoft Entra ID and requests a token for the **Azure DevOps resource, which is only available to organizational (work or school) accounts**. **Personal Microsoft accounts (Outlook/Hotmail/Live/Gmail-linked, etc.) are rejected by Entra** with "You can't sign in with a personal account. Use your work or school account instead". Personal-account users should use the extension's **Browser session** authentication method (recommended - it reuses the user's existing `dev.azure.com` sign-in and needs no app registration, see the README) or the **PAT** method, instead of "Sign in with Microsoft".
 
 ---
 
@@ -28,17 +30,34 @@ If an admin needs a **different** Client ID and Redirect URI, they can override 
 4. Fill in:
    - **Name**: `ADO Helper Extension` (or similar)
    - **Supported account types**: 
-     - **Multi-Tenant** (recommended for wider use): Select **"Accounts in any organizational directory (Any Azure AD directory - Multitenant) and personal Microsoft accounts (e.g. Skype, Xbox)"** - allows companies AND individual users with one app
+     - **Multi-Tenant** (recommended for wider use): Select **"Accounts in any organizational directory (Any Azure AD directory - Multitenant) and personal Microsoft accounts (e.g. Skype, Xbox)"** - one app registration usable by any company. (Selecting the personal-accounts option does **not** enable personal Microsoft accounts for this flow - the Azure DevOps token is organizational-only, see the limitation note above.)
      - **Single-Tenant** (internal use only): Select **"Accounts in this organizational directory only"** - allows only your company employees
-   - **Redirect URI**: Public client/native (mobile & desktop)
+   - **Redirect URI**: register it as described under **"Register the redirect URI"** below
    - **Redirect URI value**: `https://<extension-id>.chromiumapp.org/`. Copy the value from Options page.
 
 5. Click **Register**
 
-ℹ️ **Why "Public client/native (mobile & desktop)" and not "Web" or "Single-page application"?**
-- **Web** marks the app as a confidential client, which requires a client secret. A browser extension ships its code to every user's machine, so a secret baked into it isn't secret — the extension never sends one, so Entra would reject the token exchange.
-- **Single-page application (SPA)** doesn't need a secret, but Microsoft caps its refresh tokens at 24 hours, forcing everyone to sign in again daily.
-- **Public client/native** matches how the extension actually authenticates (PKCE, no secret) and gets the standard ~90-day refresh token, so users stay signed in.
+### Register the redirect URI (public client)
+
+The extension authenticates as a **public client**: it uses PKCE and never sends a client secret (a secret baked into a browser extension is not secret, because every user can read the extension's code). Use **either** configuration below:
+
+**Option 1 — Web platform + "Allow public client flows" (recommended)**
+
+This is the configuration Chrome/Edge extensions normally use, because Entra only accepts remote `https://...chromiumapp.org` redirect URIs on the **Web** platform — the "Mobile and desktop applications" platform only allows loopback URIs (`http://localhost`) or custom schemes.
+
+1. In **Authentication → Platform configurations**, click **Add a platform → Web**.
+2. Set the redirect URI to `https://<extension-id>.chromiumapp.org/`.
+3. In **Authentication → Advanced settings**, set **Allow public client flows** to **Yes**.
+
+⚠️ If you skip step 3, Entra treats the app as a confidential "Web" client and rejects the token exchange because no client secret is sent (`AADSTS7000218`).
+
+**Option 2 — Mobile and desktop applications (public client/native)**
+
+Use this only if the Entra portal accepts the URI under this platform (some consoles do). A "Mobile and desktop applications" registration is a public client by default, so no extra toggle is needed.
+
+> Either option gives the same result: PKCE sign-in with no secret and normal refresh-token lifetimes. What you must **not** use:
+> - **Web without "Allow public client flows = Yes"** → Entra demands a client secret the extension cannot safely ship.
+> - **Single-page application (SPA)** → Microsoft caps SPA refresh tokens at ~24 hours, so users would be forced to sign in again daily.
 
 ## Step 2: Configure API Permissions
 
@@ -92,9 +111,9 @@ Share the Client ID from Step 3 with users:
 → Admin approves in Azure Entra ID  
 → All other employees can sign in immediately
 
-**For individual users**: Share publicly  
-→ Users sign in with personal Microsoft account  
-→ No approval needed
+**For individual users (work/school)**: Share the Client ID  
+→ Users whose work or school account is a member of the Azure DevOps organization sign in directly (self-service consent, no admin approval needed).  
+→ Users with **personal Microsoft accounts** cannot use this OAuth flow — they must use the PAT method in the extension instead.
 
 
 
@@ -105,7 +124,7 @@ Share the Client ID from Step 3 with users:
 - [ ] Selected account type:
   - [ ] Multi-Tenant: "Accounts in any organizational directory + personal Microsoft accounts"
   - [ ] Single-Tenant: "Accounts in this organizational directory only"
-- [ ] Added redirect URI as **Public client/native (mobile & desktop)**: `https://<extension-id>.chromiumapp.org/`
+- [ ] Registered redirect URI as **Web + "Allow public client flows = Yes"** (or as **Public client/native** if the portal accepts it): `https://<extension-id>.chromiumapp.org/`
 - [ ] Configured Azure DevOps API permissions
 - [ ] Verified Microsoft Graph delegated `User.Read` is present
 - [ ] Granted admin consent in your tenant
@@ -116,12 +135,12 @@ Share the Client ID from Step 3 with users:
 - [ ] Configured Conditional Access/MFA if needed
 - [ ] Enabled audit logging for compliance
 - [ ] Confirmed baseline delegated sign-in consent is approved by admin policy
-- [ ] Tested with personal Microsoft account user
-- [ ] Tested with corporate user from different company
+- [ ] Tested with work/school user from a different company
+- [ ] Confirmed personal Microsoft accounts are rejected with "work or school account required" (expected behavior)
 
 ### Testing
-- [ ] Tested extension with Client ID (personal account)
+- [ ] Tested extension with Client ID (work/school account)
 - [ ] Tested company employee sign-in (admin consent flow)
-- [ ] Tested individual user sign-in (direct login)
+- [ ] Tested individual work/school user sign-in (direct login)
 
 

@@ -33,12 +33,51 @@ class RemoteOAuthToken {
 }
 
 class AzureDevOpsAPI {
-    constructor(organization, project, authToken, isOAuth = false) {
+    constructor(organization, project, authToken, isOAuth = false, isSession = false) {
         this.organization = organization;
         this.project = project;
         this.authToken = authToken;
         this.isOAuth = isOAuth;
+        // Session mode: no Authorization header at all; the request is
+        // authenticated by the dev.azure.com sign-in cookies of the current
+        // browser tab (supports personal Microsoft accounts).
+        this.isSession = isSession;
         this.baseUrl = `https://dev.azure.com/${organization}/${project}/_apis`;
+    }
+
+    /**
+     * Create API instance that relies on the browser session (cookies) of the
+     * dev.azure.com page the content script is running on. No token needed.
+     * @param {string} organization - Azure DevOps organization
+     * @param {string} project - Azure DevOps project
+     * @returns {AzureDevOpsAPI} API instance
+     */
+    static withSession(organization, project) {
+        return new AzureDevOpsAPI(organization, project, null, false, true);
+    }
+
+    /**
+     * Central fetch: adds the Authorization header for PAT/OAuth, or sends the
+     * request with the browser credentials (cookies) in session mode.
+     * @private
+     * @param {string} url - API URL
+     * @returns {Promise<Response>}
+     */
+    async _apiFetch(url) {
+        const headers = {
+            'Content-Type': 'application/json'
+        };
+        if (this.isSession) {
+            return fetch(url, {
+                headers,
+                credentials: 'include'
+            });
+        }
+        headers['Authorization'] = await this.getAuthHeader();
+        return fetch(url, {
+            headers,
+            credentials: 'same-origin'
+        });
     }
 
     /**
@@ -79,7 +118,12 @@ class AzureDevOpsAPI {
             chrome.storage.sync.get('authMethod', (syncResult) => {
                 const authMethod = syncResult.authMethod || 'oauth';
                 
-                if (authMethod === 'pat' && patToken) {
+                if (authMethod === 'session') {
+                    // Browser session: authenticated by the dev.azure.com
+                    // cookies of the current tab (personal accounts included).
+                    console.log('Using browser session authentication');
+                    resolve(AzureDevOpsAPI.withSession(organization, project));
+                } else if (authMethod === 'pat' && patToken) {
                     // Use PAT authentication
                     console.log('Using PAT authentication');
                     resolve(new AzureDevOpsAPI(organization, project, patToken, false));
@@ -102,6 +146,11 @@ class AzureDevOpsAPI {
      * @returns {Promise<string>} Authorization header value
      */
     async getAuthHeader() {
+        if (this.isSession) {
+            // Session mode must NOT send an Authorization header — the server
+            // would treat Basic/Bearer as the auth source and ignore cookies.
+            return null;
+        }
         if (this.isOAuth) {
             // For OAuth, use Bearer token
             if (this.oauth) {
@@ -164,13 +213,7 @@ class AzureDevOpsAPI {
             const results = [];
             for (const chunk of chunks) {
                 const url = `${this.baseUrl}/wit/workitems?ids=${chunk.join(',')}&$expand=relations&api-version=7.0`;
-                const authHeader = await this.getAuthHeader();
-                const response = await fetch(url, {
-                    headers: {
-                        'Authorization': authHeader,
-                        'Content-Type': 'application/json'
-                    }
-                });
+                const response = await this._apiFetch(url);
 
                 this.throwIfAuthFailed(response);
 
@@ -379,13 +422,7 @@ class AzureDevOpsAPI {
         try {
             const url = `${this.baseUrl}/wit/workitems/${workItemId}?$expand=relations&api-version=7.0`;
             
-            const authHeader = await this.getAuthHeader();
-            const response = await fetch(url, {
-                headers: {
-                    'Authorization': authHeader,
-                    'Content-Type': 'application/json'
-                }
-            });
+            const response = await this._apiFetch(url);
 
             this.throwIfAuthFailed(response);
             if (!response.ok) {
@@ -514,13 +551,7 @@ class AzureDevOpsAPI {
 
             const url = `${this.baseUrl}/build/builds?branchName=${encodeURIComponent(fullBranchName)}&api-version=7.0`;
 
-            const authHeader = await this.getAuthHeader();
-            const response = await fetch(url, {
-                headers: {
-                    'Authorization': authHeader,
-                    'Content-Type': 'application/json'
-                }
-            });
+            const response = await this._apiFetch(url);
 
             this.throwIfAuthFailed(response);
             if (!response.ok) {
@@ -563,13 +594,7 @@ class AzureDevOpsAPI {
     async getPullRequestDetails(pullRequestId) {
         try {
             const url = `${this.baseUrl}/git/pullrequests/${pullRequestId}?api-version=7.0`;
-            const authHeader = await this.getAuthHeader();
-            const response = await fetch(url, {
-                headers: {
-                    'Authorization': authHeader,
-                    'Content-Type': 'application/json'
-                }
-            });
+            const response = await this._apiFetch(url);
             this.throwIfAuthFailed(response);
             if (!response.ok) return null;
             return await response.json();
@@ -589,13 +614,7 @@ class AzureDevOpsAPI {
         try {
             const url = `${this.baseUrl}/wit/workitems/${workItemId}?$expand=relations&api-version=7.0`;
 
-            const authHeader = await this.getAuthHeader();
-            const response = await fetch(url, {
-                headers: {
-                    'Authorization': authHeader,
-                    'Content-Type': 'application/json'
-                }
-            });
+            const response = await this._apiFetch(url);
 
             this.throwIfAuthFailed(response);
             if (!response.ok) {
@@ -636,13 +655,7 @@ class AzureDevOpsAPI {
             const branchName = `refs/pull/${pullRequestId}/merge`;
             const url = `${this.baseUrl}/build/builds?branchName=${encodeURIComponent(branchName)}&reasonFilter=pullRequest&queryOrder=queueTimeDescending&$top=1&api-version=7.0`;
             
-            const authHeader = await this.getAuthHeader();
-            const response = await fetch(url, {
-                headers: {
-                    'Authorization': authHeader,
-                    'Content-Type': 'application/json'
-                }
-            });
+            const response = await this._apiFetch(url);
 
             this.throwIfAuthFailed(response);
             if (!response.ok) return null;
@@ -797,13 +810,7 @@ class AzureDevOpsAPI {
             }
             
             const url = `${this.baseUrl}/git/repositories/${repoId}/refs?filter=heads/${encodeURIComponent(filterName)}&api-version=7.0`;
-            const authHeader = await this.getAuthHeader();
-            const response = await fetch(url, {
-                headers: {
-                    'Authorization': authHeader,
-                    'Content-Type': 'application/json'
-                }
-            });
+            const response = await this._apiFetch(url);
 
             this.throwIfAuthFailed(response);
             if (!response.ok) return null;
@@ -828,13 +835,7 @@ class AzureDevOpsAPI {
     async getCommitStatuses(repoId, commitId) {
         try {
             const url = `${this.baseUrl}/git/repositories/${repoId}/commits/${commitId}/statuses?api-version=7.0`;
-            const authHeader = await this.getAuthHeader();
-            const response = await fetch(url, {
-                headers: {
-                    'Authorization': authHeader,
-                    'Content-Type': 'application/json'
-                }
-            });
+            const response = await this._apiFetch(url);
 
             this.throwIfAuthFailed(response);
             if (!response.ok) return [];
