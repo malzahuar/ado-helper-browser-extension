@@ -188,8 +188,11 @@ class AzureDevOpsAPI {
      */
     throwIfAuthFailed(response) {
         if (response.status === 401 || response.status === 403) {
+            const sessionHint = this.isSession
+                ? ' Not signed in to Azure DevOps in this browser, or the session expired. Sign in at dev.azure.com with an account that has access to this organization and try again (or use the OAuth/PAT methods).'
+                : ' Please sign in again.';
             throw new AuthError(
-                `Azure DevOps rejected the request (HTTP ${response.status}). Please sign in again.`,
+                `Azure DevOps rejected the request (HTTP ${response.status}).${sessionHint}`,
                 response.status
             );
         }
