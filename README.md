@@ -126,6 +126,11 @@ No credentials are stored by the extension. API calls use the session cookies of
 
 ## 📜 Version History
 
+### v1.3.0
+- **New**: "Browser session" authentication method (experimental) — supports **personal Microsoft accounts** by reusing the `dev.azure.com` sign-in you already have in the browser.
+- **Improved**: OAuth (Entra ID) sign-in reliability (PKCE, token handling moved to the service worker) and clearer authentication error messages.
+- **Docs**: Rewritten Entra ID app registration setup guide; updated security/privacy notes.
+
 ### v1.2.0
 - **Fix**: Resolved an issue where the PR status was incorrectly calculated when PR failed first time and new commit is pushed.
 - 
