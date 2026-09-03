@@ -117,6 +117,13 @@ Your PAT is stored locally in your browser using the `chrome.storage.sync` API. 
 **Browser Session:**  
 No credentials are stored by the extension. API calls use the session cookies of your existing `dev.azure.com` sign-in and never leave the browser; nothing is sent to any third-party server.
 
+**Security notes on Browser Session mode:**
+- The extension never reads cookie values and does not request the `cookies` permission; the browser attaches the session cookies automatically, and only to `https://dev.azure.com` requests.
+- No secret is kept at rest, so there is nothing stored that could be stolen and replayed from another device (unlike PAT, which syncs, or OAuth refresh tokens).
+- Requests inherit the interactive sign-in session, which has already satisfied any MFA / Conditional Access policies of the organization.
+- This mode is **read-only by design**: the extension only performs GET requests (work items, builds, PRs). It must never be extended to write operations.
+- As with any extension, only install builds you trust: an extension with host permission for `dev.azure.com` can act with the rights of your signed-in session.
+
 ## 📜 Version History
 
 ### v1.2.0
